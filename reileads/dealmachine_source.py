@@ -77,19 +77,13 @@ PERSON_FIELDS = ["full_name", "phones", "emails", "full_address",
                  "address", "city", "state", "zip"]
 
 
-def _extract_address(person: dict) -> dict:
-    """Response shape for a people-anchored property search isn't fully
-    documented, so this checks the plausible shapes rather than assuming
-    one -- top-level fields, or nested under 'property'/'residence'."""
-    for src in (person, person.get("property") or {}, person.get("residence") or {}):
-        if src.get("address") or src.get("full_address"):
-            return {
-                "address": src.get("address") or src.get("full_address") or "",
-                "city": src.get("city") or "",
-                "state": src.get("state") or "",
-                "zip": str(src.get("zip") or src.get("postal_code") or ""),
-            }
-    return {"address": "", "city": "", "state": "", "zip": ""}
+def _addr(src: dict) -> dict:
+    return {
+        "address": src.get("address") or src.get("full_address") or "",
+        "city": src.get("city") or "",
+        "state": src.get("state") or "",
+        "zip": str(src.get("zip") or src.get("postal_code") or ""),
+    }
 
 
 def search_hot(metro: str, limit: int = 50) -> tuple[list[dict], int]:
@@ -146,33 +140,44 @@ def to_event_payload(person: dict, metro: str, state: str, county_label: str) ->
     so it flows through push() exactly like a county-sourced lead. Phone
     is already present, so this bypasses skiptrace.py's gate entirely.
     """
-    addr = _extract_address(person)
+    # The distressed asset (what we're calling about) vs. where the owner
+    # actually receives mail -- two different addresses in this response,
+    # same distinction core/reireply.py already makes for county-sourced
+    # leads. Falls back to whichever is present if one is missing.
+    site = _addr(person.get("property") or {})
+    mail = _addr(person.get("residence") or {})
+    if not site["address"]:
+        site = mail
+    if not mail["address"]:
+        mail = site
+
     phone, ptype, dnc = best_phone(person)
     email = best_email(person)
     full = (person.get("full_name") or "").strip()
-    parts = full.split()
-    first, last = (parts[0], " ".join(parts[1:])) if len(parts) > 1 else ("", full)
+    first = person.get("first_name") or full.split()[0] if full else ""
+    last = person.get("last_name") or " ".join(full.split()[1:]) if full else ""
 
     return {
         "county": county_label,
         "state": state,
         "metro": metro,
-        "owner_full": full,
-        "owner_first": first,
-        "owner_last": last,
+        "owner_full": full.title(),
+        "owner_first": str(first).title(),
+        "owner_last": str(last).title(),
         "is_entity": False,          # anchor=people only returns individuals
-        "site_address": addr["address"],
-        "site_city": addr["city"],
-        "site_zip": addr["zip"],
-        "mail_address": addr["address"],
-        "mail_city": addr["city"],
-        "mail_state": addr["state"] or state,
-        "mail_zip": addr["zip"],
+        "site_address": site["address"],
+        "site_city": site["city"],
+        "site_zip": site["zip"],
+        "mail_address": mail["address"],
+        "mail_city": mail["city"],
+        "mail_state": mail["state"] or state,
+        "mail_zip": mail["zip"],
+        "property_type": (person.get("property") or {}).get("property_type", ""),
         "phone": phone,
         "phone_type": ptype,
         "do_not_call": dnc,
         "email": email,
-        "absentee": True,            # the filter that selected them
+        "absentee": (site["city"] or "").upper() != (mail["city"] or "").upper(),
         "signals": sorted(person.get("hot_signals") or []),
         "source": "dealmachine",
     }

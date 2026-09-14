@@ -15,6 +15,7 @@ from . import pipeline_oh
 from . import pipeline_ga
 from . import backfill
 from . import skiptrace as skiptrace_mod
+from . import pipeline_dealmachine
 
 OH_COUNTIES = sorted(pipeline_oh.REGISTRY)
 GA_COUNTIES = ["fulton", "cobb", "cherokee", "douglas"]  # wired legal-ad sites
@@ -24,7 +25,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="reileads",
         description="Multi-state real estate lead pipeline -> REI Reply")
     ap.add_argument("command", choices=["run", "status", "push", "seed-franklin",
-                                        "backfill", "skiptrace"])
+                                        "backfill", "skiptrace", "dealmachine"])
     ap.add_argument("--state", choices=["oh", "ga"], action="append",
                     help="repeatable; default both")
     ap.add_argument("--county", action="append",
@@ -62,6 +63,14 @@ def main(argv=None):
 
     if a.command == "status":
         _status(store)
+        return 0
+
+    if a.command == "dealmachine":
+        metros = a.county or ["cleveland", "cincinnati", "columbus", "savannah", "atlanta"]
+        n = pipeline_dealmachine.run(store, metros, per_metro_limit=a.backlog or 50)
+        print(f"\n{n} dealmachine-sourced leads inserted")
+        res = push(store, a.limit)
+        print(f"pending={res['pending']} pushed={res['pushed']} failed={res['failed']} dry_run={res['dry_run']}")
         return 0
 
     if a.command == "skiptrace":
