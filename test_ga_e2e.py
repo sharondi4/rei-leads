@@ -64,14 +64,6 @@ legal_ads.LegalAdsClient.__init__ = lambda self: setattr(self, "s", FakeSession(
 # patches in a placeholder path to keep exercising that chain.
 legal_ads.SITES["fulton"] = {**legal_ads.SITES["fulton"], "list_path": "/test-notices/"}
 
-# pipeline_ga.collect() no longer calls the real newspaper scraper by
-# default (see pipeline_ga.py's module docstring -- disabled 2026-09-10,
-# every GA paper's ToS bars automated access). This test still exists to
-# prove the address-parse -> parcel-join -> classify -> store chain works,
-# so it patches the disabled call site back to the real (mocked-HTTP)
-# fetch for this test run only. Production stays disabled.
-pipeline_ga._no_lawful_ga_source = legal_ads.LegalAdsForeclosure.fetch
-
 # ---- mock Fulton parcel data: the hot lead is a long-time absentee owner;
 # the "new owner" lead has a recent purchase + homestead (should exclude).
 class FakeFultonParcels(fulton_parcel.FultonParcels):

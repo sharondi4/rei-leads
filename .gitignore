@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .env
+.env.save
+.env.*.save
 reileads.sqlite3
 out/
 *.log
