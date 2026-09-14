@@ -74,12 +74,18 @@ class Store:
         )
         return {r["parcel"]: (r["in_foreclosure"], r["delq_balance"]) for r in cur}
 
-    def apply_snapshot(self, county: str, rows: list) -> list:
+    def apply_snapshot(self, county: str, rows: list, vet=None) -> list:
         """rows: list of dicts with keys parcel, in_foreclosure, delq_balance, payload.
 
         Returns the list of new events. A parcel is a lead when it ENTERS
         foreclosure, not merely because it is in foreclosure -- otherwise the
         first run dumps every distressed parcel in the county into the CRM.
+
+        vet: optional callable(payload) -> (ok, reason, payload). Applied to
+        events only, never to the parcels table -- a rejected parcel still
+        gets tracked, so tomorrow's diff and the backlog both keep seeing
+        it. Passed in rather than imported so this module stays free of
+        classifier and county knowledge.
         """
         prior = self.prior_state(county)
         first_run = len(prior) == 0
@@ -118,10 +124,15 @@ class Store:
             )
 
             if ev and ev != "exited_foreclosure":
+                ev_payload = r.get("payload", {})
+                if vet is not None:
+                    ok, _reason, ev_payload = vet(ev_payload)
+                    if not ok:
+                        continue
                 cur = self.db.execute(
                     """INSERT OR IGNORE INTO events (county,parcel,event,detected_on,payload)
                        VALUES (?,?,?,?,?)""",
-                    (county, parcel, ev, d, payload),
+                    (county, parcel, ev, d, json.dumps(ev_payload, default=str)),
                 )
                 if cur.rowcount:
                     # Same shape as unpushed() returns, so downstream code
@@ -131,7 +142,7 @@ class Store:
                         "parcel": parcel,
                         "event": ev,
                         "detected_on": d,
-                        "payload": r.get("payload", {}),
+                        "payload": ev_payload,
                     })
 
         self.db.commit()

@@ -62,6 +62,8 @@ def collect(counties=None, days_back=3) -> list[dict]:
     leads = []
     excluded_count = 0
 
+    from .core import quality
+
     for raw in _no_lawful_ga_source(counties=counties, days_back=days_back):
         p = dict(raw["payload"])
 
@@ -72,16 +74,15 @@ def collect(counties=None, days_back=3) -> list[dict]:
             if hit:
                 p.update(hit)
 
-        v = score(p)
-        if v.excluded:
+        # Same gate as every other path. No same-owner check: a Georgia
+        # foreclosure notice is the event itself, not a historical debt
+        # that a later sale could have cleared.
+        ok, reason, p = quality.vet(p, require_same_owner=False)
+        if not ok:
             excluded_count += 1
-            log.debug("excluded %s (%s): %s", p.get("site_address"), p["county"], v.reason)
+            log.debug("rejected %s (%s): %s", p.get("site_address"), p.get("county"), reason)
             continue
 
-        p["urgency_score"] = v.score
-        p["tier"] = tier(v.score)
-        p["persona"] = v.persona
-        p["signals"] = v.signals
         leads.append({"parcel": raw["parcel"], "payload": p})
 
     log.info("Georgia pass: %s leads kept, %s excluded", len(leads), excluded_count)
@@ -126,24 +127,27 @@ def collect_probate(county_key: str = "douglas", days_back: int = 7) -> list[dic
     2026-09-11, confirmed live -- see douglas_probate.py's docstring for
     what this can and can't do, and why only Douglas is wired up.
     """
-    leads, excluded_count = [], 0
+    from collections import Counter
+    from .core import quality
     from .sources.ga.douglas_probate import DouglasProbate
 
+    leads, rejected = [], Counter()
+
     for raw in DouglasProbate.fetch(county_key=county_key, days_back=days_back):
-        p = dict(raw["payload"])
-        v = score(p)
-        if v.excluded:
-            excluded_count += 1
-            log.debug("excluded probate case %s (%s): %s", p.get("case_number"), p["county"], v.reason)
+        # Same gate Ohio and the backlog use. require_same_owner is off:
+        # there is no tax delinquency here to have predated a sale, and
+        # the decedent's own last transfer is not a change of hands away
+        # from the estate.
+        ok, reason, p = quality.vet(dict(raw["payload"]), require_same_owner=False)
+        if not ok:
+            rejected[reason] += 1
+            log.debug("rejected probate case %s: %s", raw["payload"].get("case_number"), reason)
             continue
-        p["urgency_score"] = v.score
-        p["tier"] = tier(v.score)
-        p["persona"] = v.persona
-        p["signals"] = v.signals
         leads.append({"parcel": raw["parcel"], "payload": p})
 
-    log.info("Georgia probate pass (%s): %s leads kept, %s excluded",
-              county_key, len(leads), excluded_count)
+    log.info("Georgia probate pass (%s): %s leads kept%s", county_key, len(leads),
+             (" (rejected: " + ", ".join(f"{v} {k}" for k, v in rejected.most_common()) + ")")
+             if rejected else "")
     return leads
 
 

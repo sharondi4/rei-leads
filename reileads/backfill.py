@@ -6,17 +6,10 @@ distressed on day one permanently uncontacted -- 99,077 parcels as of
 2026-09-14, against 19 events ever emitted. This module drips that
 backlog out at a fixed rate per run, highest urgency score first.
 
-Two filters decide what qualifies, both of them Sharon's asks:
-
-  1. Same owner since the delinquency began. If the county's own records
-     show a sale AFTER the tax delinquency started, the debt was almost
-     certainly cleared at closing and the current owner never had the
-     problem -- a dead lead wearing a distressed parcel's clothes.
-     See owner_unchanged_since_delinquency().
-
-  2. The classifier. pipeline_oh.py never calls score()/exclude() at all,
-     so no Ohio lead has ever been scored or filtered. Backlog leads are,
-     which is also what makes "highest urgency first" mean anything.
+What qualifies is decided by core/quality.py's vet(), the same gate the
+Ohio and Georgia pipelines use -- same-owner-since-delinquency, vacant
+land, street number, and the classifier. Scoring every lead is also what
+makes "highest urgency first" here mean anything.
 
 Backlog events use their own event name (backlog_tax_delinquent), so they
 tag into REI Reply as signal-backlog-tax-delinquent and can be worked
@@ -30,94 +23,11 @@ import logging
 import datetime as dt
 
 from .core.store import Store
-from .core.classify import score, tier
-from .core.normalize import year_of, has_house_number, looks_like_address
-
-# Ohio land-use codes for land with nothing built on it. Numeric prefixes
-# because counties append their own sub-codes. Anything 5xx that isn't in
-# here is residential WITH a structure (510 single family, 520 two family,
-# 550 multi), which is what we want.
-_VACANT_LAND_CODES = ("500", "501", "100", "101", "300", "400")
-
-# Text land-use descriptions, for counties that publish words not codes.
-_VACANT_LAND_WORDS = ("VACANT", "UNIMPROVED", "RAW LAND")
-
-
-def is_vacant_land(p: dict) -> bool:
-    """True when the county itself says nothing is built on the parcel.
-
-    Checked before the address heuristic because it's the county's own
-    classification rather than an inference. Mahoning's land-bank layer
-    is majority code 500 -- empty lots, which reached real CRM contacts
-    on 2026-09-14 before this existed.
-    """
-    code = str(p.get("land_use") or "").strip()
-    if code and code[:3] in _VACANT_LAND_CODES:
-        return True
-    desc = f"{p.get('land_use') or ''} {p.get('property_class') or ''}".upper()
-    return any(w in desc for w in _VACANT_LAND_WORDS)
+from .core import quality
 
 log = logging.getLogger(__name__)
 
 EVENT = "backlog_tax_delinquent"
-
-# Where each county records when the delinquency started. Checked in
-# order; they don't overlap, different counties expose different ones.
-_DELQ_START_KEYS = ("certified_delinquent_date", "delinquent_since_year",
-                    "delinquent_since", "prev_tax_year")
-
-
-def _delinquency_start_year(p: dict):
-    for key in _DELQ_START_KEYS:
-        y = year_of(p.get(key))
-        if y:
-            return y
-    return None
-
-
-def owner_unchanged_since_delinquency(p: dict) -> bool:
-    """True when the current owner is the one who ran up the delinquency.
-
-    Unknown dates return True on purpose: a missing sale date is not
-    evidence that a sale happened, and excluding on absent data would
-    silently drop whole counties whose layers don't publish it.
-
-    A sale in the SAME year the delinquency was certified counts as a
-    change of hands. Ohio certifies roughly two years into non-payment,
-    so a sale inside that window would have cleared the taxes at closing.
-    """
-    sale_year = year_of(p.get("last_sale_date"))
-    delq_year = _delinquency_start_year(p)
-    if sale_year is None or delq_year is None:
-        return True
-    return sale_year < delq_year
-
-
-def _scoreable(p: dict) -> dict:
-    """Map Ohio county field names onto the keys classify.py reads.
-
-    The classifier was written against Georgia's vocabulary
-    (tax_delinquent_amount, homestead_exemption). Ohio sources publish
-    the same facts under their own names, which is the other reason
-    scoring an Ohio payload straight out of the store returns nothing
-    useful.
-    """
-    d = dict(p)
-
-    bal = p.get("delq_balance")
-    if bal:
-        d["tax_delinquent_amount"] = bal
-
-    delq_year = _delinquency_start_year(p)
-    if delq_year:
-        years = dt.date.today().year - delq_year
-        if years > 0:
-            d["tax_delinquent_years"] = years
-
-    if p.get("homestead") is not None and "homestead_exemption" not in d:
-        d["homestead_exemption"] = bool(p.get("homestead"))
-
-    return d
 
 
 def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
@@ -144,36 +54,13 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
         # No name means REI Reply rejects the contact outright (confirmed
         # 2026-09-14: HTTP 422, "Contacts without email, phone, firstName
         # and lastName are not allowed"). Summit is the whole county.
-        if not (p.get("owner_full") or p.get("owner_last") or p.get("owner_first")):
-            stats["no_owner_name"] += 1
-            continue
-
-        if is_vacant_land(p):
-            stats["vacant_land"] += 1
-            continue
-
-        # No street number means no structure -- a lot, not a house. Kept
-        # as a separate check from is_vacant_land() because Cuyahoga
-        # publishes no land-use code at all.
-        if not has_house_number(p.get("site_address")):
-            stats["no_street_number"] += 1
-            continue
-
-        if not owner_unchanged_since_delinquency(p):
-            stats["owner_changed"] += 1
-            continue
-
-        v = score(_scoreable(p))
-        if v.excluded:
-            stats["excluded"] += 1
+        ok, reason, p = quality.vet(p)
+        if not ok:
+            stats[{"classifier": "excluded"}.get(reason, reason)] += 1
             continue
 
         stats["qualified"] += 1
-        p["urgency_score"] = v.score
-        p["tier"] = tier(v.score)
-        p["persona"] = v.persona
-        p["signals"] = v.signals
-        scored.append((v.score, r["county"], r["parcel"], p))
+        scored.append((p["urgency_score"], r["county"], r["parcel"], p))
 
     # One lead per OWNER, not per parcel. Landlords and small investors
     # hold several delinquent parcels each -- six rows for one LLC is six
