@@ -93,20 +93,43 @@ class DealMachine:
             raise DealMachineError(f"account http_{r.status_code}: {r.text[:200]}")
         return r.json()
 
-    def enrich_people(self, records: list[dict]) -> tuple[list, int]:
-        """Look up contact details for people we can already name.
+    def enrich_name(self, last_name: str, first_name: str = "",
+                    zip_code: str = "", state: str = "",
+                    per_page: int = 3, estimate: bool = False) -> tuple[list, int]:
+        """Look up one named person. Returns (people, credits charged).
 
-        records: [{"full_name", "address", "city", "state", "zip"}]
-        Returns (per-input results, credits actually charged).
+        One person per call, deliberately. This endpoint returns EVERY
+        person matching the name in the area and bills 1 credit per
+        person returned -- batching 25 names into one call would let a
+        single common surname return dozens of people and spend dozens of
+        credits on one lead. per_page is the actual spending control.
+
+        Narrowed by the owner's mailing ZIP where we have one, since name
+        plus state alone would match strangers. include_properties stays
+        off: property data would add a property credit per record for
+        facts the county already gave us.
         """
-        if not records:
+        if not last_name:
             return [], 0
+        person = {"last_name": last_name}
+        if first_name:
+            person["first_name"] = first_name
         body = {
-            "data": records,
+            "data": [person],
             "fields": PERSON_FIELDS,
-            "contact_audience": "owners",
+            "include_properties": False,
+            "per_page": per_page,
+            "page": 1,
         }
-        data = self._post("/people/enrich/name", body)
+        if zip_code:
+            body["location"] = {"type": "zip_code", "code": str(zip_code)[:5]}
+        elif state:
+            body["location"] = {"type": "state", "code": state[:2].upper()}
+        if estimate:
+            # Their own cost preview -- returns what the call WOULD spend
+            # without spending it. This is what makes a trial free.
+            body["estimate_cost"] = True
+        data = self._post("/enrichment/name", body)
         credits = int((data.get("credits") or {}).get("used") or 0)
         return data.get("data") or [], credits
 

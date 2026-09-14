@@ -60,23 +60,25 @@ def pending(store: Store, limit: int, event_like: str = None) -> list:
 
 
 def _to_query(p: dict) -> dict:
-    """What we hand DealMachine: a named person at a known address.
+    """What we hand DealMachine: a name, narrowed by where they get mail.
 
-    The owner's MAILING address is used, not the property's -- for an
-    heir who inherited a house in another city, or an absentee landlord,
-    the property address is precisely where they don't live. Falls back
-    to the property address when no mailing address was published.
+    The owner's MAILING ZIP is used, not the property's -- for an heir who
+    inherited a house in another city, or an absentee landlord, the
+    property is precisely where they don't live, so searching there finds
+    strangers. Falls back to the property's ZIP only when no mailing
+    address was published.
+
+    Entity owners are skipped upstream: a name lookup for "PALM PROPERTY
+    MANAGEMENT LLC" searches a person index for a company and returns
+    nothing worth a credit.
     """
-    addr = p.get("mail_address") or p.get("site_address") or ""
-    city = p.get("mail_city") or p.get("site_city") or ""
     state = p.get("mail_state") or p.get("state") or ""
-    zipc = str(p.get("mail_zip") or p.get("site_zip") or "")
+    zipc = str(p.get("mail_zip") or p.get("site_zip") or "").strip()
     return {
-        "full_name": p.get("owner_full") or "",
-        "address": addr,
-        "city": city,
+        "first_name": (p.get("owner_first") or "").strip(),
+        "last_name": (p.get("owner_last") or "").strip(),
         "state": state,
-        "zip": zipc,
+        "zip": zipc if zipc[:5].isdigit() else "",
     }
 
 
@@ -107,61 +109,56 @@ def run(store: Store, limit: int = 100, event_like: str = None,
     dm = DealMachine()
     today = dt.date.today().isoformat()
 
-    for i in range(0, len(leads), BATCH):
-        chunk = leads[i:i + BATCH]
-        queries = [_to_query(r["payload"]) for r in chunk]
+    for lead in leads:
+        p = lead["payload"]
+        q = _to_query(p)
+        if not q["last_name"]:
+            continue
         try:
-            results, credits = dm.enrich_people(queries)
+            people, credits = dm.enrich_name(
+                last_name=q["last_name"], first_name=q["first_name"],
+                zip_code=q["zip"], state=q["state"], estimate=trial)
         except Exception as e:
-            log.error("skip trace batch failed: %s", e)
+            log.error("skip trace failed for %s/%s: %s",
+                      lead["county"], lead["parcel"], e)
             break
 
         out["credits"] += credits
-        for lead, res in zip(chunk, results or []):
-            out["attempted"] += 1
-            phone, ptype, dnc = best_phone(res or {})
-            email = best_email(res or {})
-            matched = bool(phone or email)
-            out["matched"] += matched
-            out["phones"] += bool(phone)
-            out["emails"] += bool(email)
-            out["dnc"] += bool(dnc)
+        res = people[0] if people else {}
+        out["attempted"] += 1
+        phone, ptype, dnc = best_phone(res)
+        email = best_email(res)
+        matched = bool(phone or email)
+        out["matched"] += matched
+        out["phones"] += bool(phone)
+        out["emails"] += bool(email)
+        out["dnc"] += bool(dnc)
 
-            if trial:
-                log.info("  %-9s %-12s %-24s -> %s %s%s",
-                         lead["county"], lead["parcel"],
-                         (lead["payload"].get("owner_full") or "")[:24],
-                         phone or "(no phone)", ptype,
-                         " DNC" if dnc else "")
-                continue
+        if trial:
+            log.info("  %-9s %-11s %-22s zip=%-5s -> %s matches, %s %s%s",
+                     lead["county"], lead["parcel"],
+                     (p.get("owner_full") or "")[:22], q["zip"] or "-",
+                     len(people), phone or "(no phone)", ptype,
+                     " DNC" if dnc else "")
+            continue
 
-            store.db.execute(
-                """INSERT OR REPLACE INTO skiptraces
-                   (county,parcel,traced_at,status,phone,phone_type,do_not_call,email,credits)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
-                (lead["county"], lead["parcel"], today,
-                 "matched" if matched else "no_match",
-                 phone, ptype, int(dnc), email, 0),
-            )
-            p = lead["payload"]
-            p["phone"] = phone
-            p["phone_type"] = ptype
-            p["do_not_call"] = dnc
-            p["email"] = email
-            store.db.execute(
-                "UPDATE events SET payload=? WHERE county=? AND parcel=? AND event=?",
-                (json.dumps(p, default=str), lead["county"], lead["parcel"], lead["event"]),
-            )
-
-        if not trial:
-            # Credits land on the batch, not per lead; park them on the
-            # first row of the batch so the monthly total stays accurate
-            # without pretending we know each lead's individual share.
-            store.db.execute(
-                "UPDATE skiptraces SET credits=? WHERE county=? AND parcel=?",
-                (credits, chunk[0]["county"], chunk[0]["parcel"]),
-            )
-            store.db.commit()
+        store.db.execute(
+            """INSERT OR REPLACE INTO skiptraces
+               (county,parcel,traced_at,status,phone,phone_type,do_not_call,email,credits)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (lead["county"], lead["parcel"], today,
+             "matched" if matched else "no_match",
+             phone, ptype, int(dnc), email, credits),
+        )
+        p["phone"] = phone
+        p["phone_type"] = ptype
+        p["do_not_call"] = dnc
+        p["email"] = email
+        store.db.execute(
+            "UPDATE events SET payload=? WHERE county=? AND parcel=? AND event=?",
+            (json.dumps(p, default=str), lead["county"], lead["parcel"], lead["event"]),
+        )
+        store.db.commit()
 
     log.info("skip trace%s: %s attempted, %s matched (%s phones, %s emails, %s DNC), "
              "%s credits -- month now %s/%s",
