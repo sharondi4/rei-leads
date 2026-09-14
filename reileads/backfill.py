@@ -139,24 +139,50 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
         p["signals"] = v.signals
         scored.append((v.score, r["county"], r["parcel"], p))
 
-    scored.sort(key=lambda t: t[0], reverse=True)
-    return scored[:limit], stats
+    # One lead per OWNER, not per parcel. Landlords and small investors
+    # hold several delinquent parcels each -- six rows for one LLC is six
+    # contacts REI Reply can't merge (no phone/email to dedupe on) and six
+    # calls to the same person. The highest-scoring parcel represents the
+    # owner; the rest stay in the backlog for a later run, and the count
+    # rides along because "you're behind on six properties" is a stronger
+    # opening than one address.
+    best, counts, balances = {}, {}, {}
+    for s, county, parcel, p in scored:
+        key = (p.get("owner_full") or "").strip().upper() or f"{county}:{parcel}"
+        counts[key] = counts.get(key, 0) + 1
+        balances[key] = balances.get(key, 0) + float(p.get("delq_balance") or 0)
+        if key not in best or s > best[key][0]:
+            best[key] = (s, county, parcel, p)
+
+    deduped = []
+    for key, (s, county, parcel, p) in best.items():
+        p["portfolio_count"] = counts[key]
+        p["portfolio_delq_balance"] = round(balances[key], 2)
+        deduped.append((s, county, parcel, p))
+
+    stats["distinct_owners"] = len(deduped)
+    deduped.sort(key=lambda t: (t[0], t[3].get("portfolio_count", 1)), reverse=True)
+    return deduped[:limit], stats
 
 
 def run(store: Store, limit: int = 150, counties=None, preview: bool = False) -> int:
     leads, stats = collect(store, limit=limit, counties=counties)
 
     log.info("backlog: %s scanned, %s no owner name, %s sold since delinquency, "
-             "%s excluded by classifier, %s qualified (%s released this run)",
+             "%s excluded by classifier, %s qualified parcels across %s owners "
+             "(%s released this run)",
              f"{stats['scanned']:,}", f"{stats['no_owner_name']:,}",
              f"{stats['owner_changed']:,}", f"{stats['excluded']:,}",
-             f"{stats['qualified']:,}", len(leads))
+             f"{stats['qualified']:,}", f"{stats.get('distinct_owners', 0):,}",
+             len(leads))
 
     if preview:
         for s, county, parcel, p in leads[:10]:
-            log.info("  %-10s %-12s score=%-3s %-6s %s | %s",
-                     county, parcel, s, p.get("tier"),
-                     (p.get("owner_full") or "")[:28], (p.get("site_address") or "")[:40])
+            log.info("  %-10s %-11s score=%-3s %-2s x%-2s $%-9s %-28s | %s",
+                     county, parcel, s, p.get("tier"), p.get("portfolio_count"),
+                     f"{p.get('portfolio_delq_balance') or 0:,.0f}",
+                     (p.get("owner_full") or "")[:28],
+                     (p.get("site_address") or "")[:38])
         return 0
 
     d = dt.date.today().isoformat()

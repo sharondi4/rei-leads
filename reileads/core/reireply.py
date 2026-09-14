@@ -104,6 +104,8 @@ def to_contact(ev: dict, location_id: str) -> dict:
         tags.append("on-payment-plan")     # usually a weaker lead
     if p.get("tax_cert_sold"):
         tags.append("tax-cert-sold")
+    if (p.get("portfolio_count") or 0) > 1:
+        tags.append("portfolio-owner")     # several delinquent parcels, one owner
 
     name = p.get("owner_full") or "Unknown Owner"
     contact = {
