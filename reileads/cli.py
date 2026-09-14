@@ -25,7 +25,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="reileads",
         description="Multi-state real estate lead pipeline -> REI Reply")
     ap.add_argument("command", choices=["run", "status", "push", "seed-franklin",
-                                        "backfill", "skiptrace", "dealmachine"])
+                                        "backfill", "skiptrace", "dealmachine",
+                                        "breakdown"])
     ap.add_argument("--state", choices=["oh", "ga"], action="append",
                     help="repeatable; default both")
     ap.add_argument("--county", action="append",
@@ -63,6 +64,10 @@ def main(argv=None):
 
     if a.command == "status":
         _status(store)
+        return 0
+
+    if a.command == "breakdown":
+        _breakdown(store)
         return 0
 
     if a.command == "dealmachine":
@@ -124,6 +129,34 @@ def main(argv=None):
     if res["csv"]:
         print(f"csv: {res['csv']}")
     return 0
+
+
+def _breakdown(store: Store, date: str = None):
+    """Exactly what was pushed to REI Reply on one day, by state/county/
+    event -- the answer to "what did this morning's run actually do,"
+    built because a log line saying "N pushed" doesn't say what N is."""
+    import datetime as dt
+    date = date or dt.date.today().isoformat()
+    rows = store.db.execute(
+        """SELECT e.event, e.county,
+                  json_extract(e.payload,'$.state') AS state,
+                  COUNT(*) n
+           FROM events e
+           JOIN pushes p ON p.county=e.county AND p.parcel=e.parcel AND p.event=e.event
+           WHERE substr(p.pushed_at,1,10)=?
+           GROUP BY e.event, e.county, state
+           ORDER BY state, e.county""",
+        (date,),
+    ).fetchall()
+    if not rows:
+        print(f"No pushes recorded for {date}.")
+        return
+    total = 0
+    print(f"Pushed to REI Reply on {date}:\n")
+    for r in rows:
+        print(f"  {r['state'] or '??':<4} {r['county']:<20} {r['event']:<26} {r['n']:>4}")
+        total += r["n"]
+    print(f"\n  TOTAL: {total}")
 
 
 def _status(store: Store):
