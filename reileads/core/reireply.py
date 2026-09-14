@@ -92,6 +92,11 @@ def to_contact(ev: dict, location_id: str) -> dict:
     state = (p.get("state") or "").upper() or "??"
     tags = [
         "rei-leads",
+        # Sharon's own label for this feed, used as the trigger on her
+        # REI Reply automation. Kept alongside rei-leads rather than
+        # replacing it: rei-leads is what this codebase guarantees, and
+        # renaming the trigger tag would silently break her workflow.
+        "county-records",
         f"state-{state.lower()}",
         f"county-{county.lower()}",
         f"signal-{ev['event'].replace('_','-')}",
