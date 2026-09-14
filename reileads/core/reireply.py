@@ -107,6 +107,12 @@ def to_contact(ev: dict, location_id: str) -> dict:
         tags.append("tax-cert-sold")
     if (p.get("portfolio_count") or 0) > 1:
         tags.append("portfolio-owner")     # several delinquent parcels, one owner
+    if p.get("do_not_call"):
+        # The only number we found is on the DNC list. Tagged rather than
+        # withheld: Georgia's mini-TCPA carries a private right of action
+        # up to $2,000 per knowing violation, so this must be filterable
+        # in the CRM before anyone dials, not buried in a field.
+        tags.append("dnc-do-not-dial")
 
     name = p.get("owner_full") or "Unknown Owner"
     mail = p.get("mail_address") or ""
@@ -122,6 +128,8 @@ def to_contact(ev: dict, location_id: str) -> dict:
         # company-contact type (contactType), so for an entity owner the
         # full name goes directly in firstName, lastName left blank --
         # the closest honest representation this API supports.
+        "phone": p.get("phone") or None,
+        "email": p.get("email") or None,
         "firstName": p.get("owner_first") or (name if p.get("is_entity") else None),
         "lastName": p.get("owner_last") or None,
         # HighLevel's actual company-name slot (shows in the "Business name"

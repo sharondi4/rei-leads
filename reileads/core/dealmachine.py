@@ -134,22 +134,31 @@ class DealMachine:
         return data.get("data") or [], credits
 
 
-def best_phone(result: dict) -> tuple[str, str, bool]:
-    """Pick a number to call: (number, type, do_not_call).
+def all_phones(result: dict) -> list[dict]:
+    """Every number found, best first.
 
-    Mobile first -- these are acquisition calls to individuals and a
-    landline for a house someone inherited and moved out of is usually
-    dead. DNC numbers are returned rather than hidden so the caller can
-    decide; Georgia's mini-TCPA carries a private right of action up to
-    $2,000 per knowing violation, so this flag must reach the CRM rather
-    than being quietly dropped here.
+    DNC status outranks line type, deliberately. A mobile is the better
+    number to reach someone on, but Georgia's mini-TCPA carries a private
+    right of action up to $2,000 per knowing violation -- so a clean
+    landline beats a mobile on the Do Not Call list every time, and the
+    ordering must not be the other way round.
+
+    Nothing is discarded: DNC numbers ride along flagged, because the
+    caller needs to see that a number exists and why it isn't the one
+    being dialled.
     """
     phones = []
     for c in (result.get("contacts") or [result]):
         phones.extend(c.get("phones") or [])
+    phones.sort(key=lambda p: (bool(p.get("do_not_call")), p.get("type") != "wireless"))
+    return phones
+
+
+def best_phone(result: dict) -> tuple[str, str, bool]:
+    """(number, type, do_not_call) for the single best number, or blanks."""
+    phones = all_phones(result)
     if not phones:
         return "", "", False
-    phones.sort(key=lambda p: (p.get("type") != "wireless", bool(p.get("do_not_call"))))
     top = phones[0]
     return str(top.get("number") or ""), str(top.get("type") or ""), bool(top.get("do_not_call"))
 

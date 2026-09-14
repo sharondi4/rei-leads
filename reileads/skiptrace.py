@@ -23,7 +23,7 @@ import logging
 
 from .core import config
 from .core.store import Store
-from .core.dealmachine import DealMachine, best_phone, best_email
+from .core.dealmachine import DealMachine, best_phone, best_email, all_phones
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +160,14 @@ def run(store: Store, limit: int = 100, event_like: str = None,
         p["phone_type"] = ptype
         p["do_not_call"] = dnc
         p["email"] = email
+        # Every number found, not just the chosen one -- so the caller can
+        # see there was a second option rather than trusting our ranking,
+        # and can see which ones are DNC and why they weren't picked.
+        p["phones_all"] = "; ".join(
+            f"{x.get('number')} ({x.get('type')}{', DNC' if x.get('do_not_call') else ''})"
+            for x in all_phones(res))
+        alts = all_phones(res)[1:2]
+        p["phone_alt"] = str(alts[0].get("number")) if alts else ""
         store.db.execute(
             "UPDATE events SET payload=? WHERE county=? AND parcel=? AND event=?",
             (json.dumps(p, default=str), lead["county"], lead["parcel"], lead["event"]),
