@@ -30,8 +30,16 @@ log = logging.getLogger(__name__)
 EVENT = "backlog_tax_delinquent"
 
 
-def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
-    """Return (top N qualifying leads, counts by reason rejected)."""
+def collect(store: Store, limit: int = 150, counties=None,
+            min_score: int = 0) -> tuple[list, dict]:
+    """Return (top N qualifying leads, counts by reason rejected).
+
+    min_score gates on the classifier's 0-100 urgency score. 35 is the
+    A/B boundary (see classify.tier), i.e. "worth a phone call" -- below
+    that is a mailing list. Releasing only A/B keeps the daily batch
+    callable and spends fewer skip-trace credits on leads that were never
+    going to be dialled.
+    """
     sql = """SELECT p.county, p.parcel, p.payload
              FROM parcels p
              LEFT JOIN events e
@@ -71,6 +79,10 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
             stats[{"classifier": "excluded"}.get(reason, reason)] += 1
             continue
 
+        if p["urgency_score"] < min_score:
+            stats["below_min_score"] = stats.get("below_min_score", 0) + 1
+            continue
+
         stats["qualified"] += 1
         scored.append((p["urgency_score"], r["county"], r["parcel"], p))
 
@@ -100,8 +112,10 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
     return deduped[:limit], stats
 
 
-def run(store: Store, limit: int = 150, counties=None, preview: bool = False) -> int:
-    leads, stats = collect(store, limit=limit, counties=counties)
+def run(store: Store, limit: int = 150, counties=None, preview: bool = False,
+        min_score: int = 0) -> int:
+    leads, stats = collect(store, limit=limit, counties=counties,
+                           min_score=min_score)
 
     log.info("backlog: %s scanned | rejected: %s no owner name, %s vacant land, "
              "%s no street number, %s sold since delinquency, %s classifier | "

@@ -35,6 +35,9 @@ def main(argv=None):
                     help="release N backlog leads alongside a run (0 = off)")
     ap.add_argument("--preview", action="store_true",
                     help="backfill: report counts and a sample, insert nothing")
+    ap.add_argument("--min-score", type=int, default=0,
+                    help="backlog: only release leads scoring at least this "
+                         "(35 = tier B and above, i.e. worth calling)")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args(argv)
 
@@ -59,7 +62,7 @@ def main(argv=None):
 
     if a.command == "backfill":
         n = backfill.run(store, limit=a.backlog or 150, counties=a.county,
-                         preview=a.preview)
+                         preview=a.preview, min_score=a.min_score)
         if a.preview:
             return 0
         print(f"\n{n} backlog leads released")
@@ -92,7 +95,8 @@ def main(argv=None):
         # produced a real event today is already in `events` and won't be
         # double-emitted as backlog.
         if a.backlog:
-            released = backfill.run(store, limit=a.backlog, counties=a.county)
+            released = backfill.run(store, limit=a.backlog, counties=a.county,
+                                    min_score=a.min_score)
             print(f"{released} backlog leads released")
             total += released
 
