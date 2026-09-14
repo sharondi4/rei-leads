@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .classify import score, tier
+from .classify import score, tier, derive
 from .normalize import year_of, has_house_number
 
 # Ohio land-use codes for land with nothing built on it. Numeric prefixes
@@ -126,11 +126,23 @@ def vet(p: dict, require_structure: bool = True,
     if require_same_owner and not owner_unchanged_since_delinquency(p):
         return False, "owner_changed", p
 
-    v = score(normalize_signals(p))
+    signals = normalize_signals(p)
+    v = score(signals)
     if v.excluded:
         return False, "classifier", p
 
     out = dict(p)
+    # classify.derive() works these out to score with, then discards them.
+    # Persisting them is what lets a lead be filtered on "out of state" or
+    # "owned 15+ years" in REI Reply and in the CSV. An existing True is
+    # never overwritten: a source that already knows an owner is absentee
+    # (Stark publishes no situs city, so derive() can't tell) must not
+    # lose that to a recomputation with less to go on.
+    derived = derive(signals)
+    for k in ("absentee", "out_of_state", "no_homestead", "free_and_clear",
+              "long_tenure", "years_owned"):
+        if k in derived and not out.get(k):
+            out[k] = derived[k]
     out["urgency_score"] = v.score
     out["tier"] = tier(v.score)
     out["persona"] = v.persona
