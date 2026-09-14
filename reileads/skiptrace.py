@@ -115,9 +115,15 @@ def run(store: Store, limit: int = 100, event_like: str = None,
         if not q["last_name"]:
             continue
         try:
+            # Real lookup even on a trial: estimate_cost returns a price
+            # preview with no people in it, so it can price a batch but
+            # can't tell us the one thing a trial is for -- how often we
+            # actually get a number. There is no sandbox that returns
+            # real phones, so a trial costs real credits; `trial` only
+            # stops the result being written back.
             people, credits = dm.enrich_name(
                 last_name=q["last_name"], first_name=q["first_name"],
-                zip_code=q["zip"], state=q["state"], estimate=trial)
+                zip_code=q["zip"], state=q["state"])
         except Exception as e:
             log.error("skip trace failed for %s/%s: %s",
                       lead["county"], lead["parcel"], e)
