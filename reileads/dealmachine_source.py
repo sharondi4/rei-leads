@@ -57,9 +57,15 @@ METROS = {
 HOT_CRITERIA = [
     ("preforeclosure", {"filter_id": "is_preforeclosure", "value": True}),
     ("tax_delinquent",  {"filter_id": "is_tax_delinquent", "value": True}),
-    ("vacant",          {"filter_id": "is_zombie_property", "value": True}),
+    ("vacant",          {"filter_id": "is_vacant_home", "value": True}),
 ]
 
+# Confirmed 2026-09-14 via GET /v1/filters (free, no credits) rather than
+# trusting the docs' illustrative example -- the real filter is
+# has_absentee_owners, not is_absentee_owner, and estimated_equity_percentage,
+# not equity_percent. The docs example 400'd on both.
+ABSENTEE_FILTER = {"filter_id": "has_absentee_owners", "value": True}
+EQUITY_FILTER_ID = "estimated_equity_percentage"
 MIN_EQUITY_PERCENT = 30
 
 # Contact fields plus free address context. Deliberately excludes value,
@@ -102,8 +108,8 @@ def search_hot(metro: str, limit: int = 50) -> tuple[list[dict], int]:
             "locations": locations,
             "filters": [
                 criterion,
-                {"filter_id": "is_absentee_owner", "value": True},
-                {"filter_id": "equity_percent", "operator": "greater_than_or_equal",
+                ABSENTEE_FILTER,
+                {"filter_id": EQUITY_FILTER_ID, "operator": "greater_than_or_equal",
                  "value": MIN_EQUITY_PERCENT},
             ],
             "anchor": "people",
