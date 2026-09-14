@@ -117,6 +117,9 @@ PRIMARY = [
     ("years_support",         26, "Year's Support, heir took title"),
     ("estate_signal",         24, "estate deed recorded"),
     ("probate_opened",        20, "probate case opened"),
+    # An investor bought the lien: they can force foreclosure, so the
+    # clock is already running whatever the county flag says.
+    ("tax_cert_sold",         18, "tax lien certificate sold to an investor"),
     ("vacant",                16, "property appears vacant"),
     ("lis_pendens",           15, "lis pendens, litigation on title"),
     ("contractor_lien",       14, "contractor lien, stalled renovation"),
@@ -130,11 +133,21 @@ PRIMARY = [
 # a motivated seller, they are just a homeowner.
 AMPLIFIERS = [
     ("absentee",              12, "owner mails elsewhere"),
+    ("has_equity",            12, "owes little against the property's value"),
     ("free_and_clear",        10, "no mortgage on record"),
     ("out_of_state",           8, "owner is out of state"),
     ("no_homestead",           8, "no homestead exemption"),
     ("long_tenure",            8, "owned 15+ years"),
+    ("confirmed_rental",       6, "registered rental, not owner-occupied"),
     ("entity_owner",           5, "entity owner, business decision"),
+]
+
+# Facts that make a lead WORSE. Scored rather than excluded: someone on a
+# payment plan is still reachable, just less likely to sell today, and
+# should rank below someone ignoring the bill entirely.
+PENALTIES = [
+    ("payment_plan",         -12, "on a payment plan, actively managing the debt"),
+    ("underwater",           -15, "owes more against it than it looks worth"),
 ]
 
 WEIGHTS = PRIMARY + AMPLIFIERS
@@ -241,9 +254,14 @@ def score(lead: dict) -> Verdict:
             pts += w
             signals.append(label)
 
+    for key, w, label in PENALTIES:
+        if d.get(key):
+            pts += w
+            signals.append(label)
+
     return Verdict(
         excluded=False,
-        score=min(pts, 100),
+        score=max(0, min(pts, 100)),
         persona=persona(d),
         signals=signals,
     )

@@ -44,12 +44,24 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
 
     stats = {"scanned": 0, "no_owner_name": 0, "vacant_land": 0,
              "no_street_number": 0, "owner_changed": 0,
-             "excluded": 0, "qualified": 0}
+             "excluded": 0, "qualified": 0, "stacked": 0}
     scored = []
+    overlays = store.overlays_for()
 
     for r in store.db.execute(sql, params):
         stats["scanned"] += 1
         p = json.loads(r["payload"])
+
+        # Anything another list also names -- vacancy registry, code
+        # violations, a probate filing -- rides in here as a signal the
+        # classifier already knows how to score. This is the stacking:
+        # delinquent AND vacant AND cited is a different lead entirely
+        # from delinquent alone.
+        extra = overlays.get((r["county"], r["parcel"]))
+        if extra:
+            p.update({k: (v or True) for k, v in extra.items()})
+            p["stacked_signals"] = sorted(extra)
+            stats["stacked"] += 1
 
         # No name means REI Reply rejects the contact outright (confirmed
         # 2026-09-14: HTTP 422, "Contacts without email, phone, firstName

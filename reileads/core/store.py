@@ -47,7 +47,17 @@ CREATE TABLE IF NOT EXISTS runs (
   status     TEXT,
   note       TEXT
 );
+CREATE TABLE IF NOT EXISTS overlays (
+  county      TEXT NOT NULL,
+  parcel      TEXT NOT NULL,
+  signal      TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  detected_on TEXT NOT NULL,
+  detail      TEXT,
+  PRIMARY KEY (county, parcel, signal)
+);
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(detected_on);
+CREATE INDEX IF NOT EXISTS idx_overlays_parcel ON overlays(county, parcel);
 """
 
 
@@ -147,6 +157,39 @@ class Store:
 
         self.db.commit()
         return events
+
+    # ---------- overlays: extra distress lists stacked onto the bank ----------
+
+    def add_overlay(self, county, parcel, signal, source, detail=""):
+        """Record that some other list also names this parcel.
+
+        `signal` is a key classify.py already scores -- vacant,
+        code_violation, probate_opened -- so a stacked list raises a
+        lead's score without any change to the classifier.
+        """
+        self.db.execute(
+            """INSERT INTO overlays (county,parcel,signal,source,detected_on,detail)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(county,parcel,signal) DO UPDATE SET
+                 source=excluded.source,
+                 detected_on=excluded.detected_on,
+                 detail=excluded.detail""",
+            (county, parcel, signal, source, today(), detail),
+        )
+
+    def overlays_for(self, county: str = None) -> dict:
+        """{(county, parcel): {signal: detail}} -- loaded once per run
+        rather than queried per lead, since the backlog pass walks ~99k
+        parcels and a query each would dominate its runtime."""
+        sql = "SELECT county, parcel, signal, detail FROM overlays"
+        params = ()
+        if county:
+            sql += " WHERE county=?"
+            params = (county,)
+        out = {}
+        for r in self.db.execute(sql, params):
+            out.setdefault((r["county"], r["parcel"]), {})[r["signal"]] = r["detail"]
+        return out
 
     # ---------- push bookkeeping ----------
 

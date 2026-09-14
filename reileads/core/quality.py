@@ -99,6 +99,27 @@ def normalize_signals(p: dict) -> dict:
     if p.get("homestead") is not None and d.get("homestead_exemption") is None:
         d["homestead_exemption"] = bool(p.get("homestead"))
 
+    if p.get("tax_cert_sold"):
+        d["tax_cert_sold"] = True
+    if p.get("rental_registered"):
+        d["confirmed_rental"] = True
+
+    # Equity, as far as county data can show it. We have no mortgage
+    # records, so this is the debt we CAN see measured against assessed
+    # value -- someone who owes $2k on a $150k house has room to sell and
+    # is simply not paying; someone who owes $80k on a $60k house is
+    # underwater and probably not a deal at all. Both are worth knowing
+    # and they point in opposite directions.
+    value = float(p.get("market_value") or 0)
+    owed = float(p.get("delq_balance") or 0)
+    if value > 1000 and owed > 0:
+        ratio = owed / value
+        if ratio < 0.10:
+            d["has_equity"] = True
+        elif ratio > 0.50:
+            d["underwater"] = True
+        d["debt_to_value"] = round(ratio, 3)
+
     return d
 
 
@@ -140,7 +161,8 @@ def vet(p: dict, require_structure: bool = True,
     # lose that to a recomputation with less to go on.
     derived = derive(signals)
     for k in ("absentee", "out_of_state", "no_homestead", "free_and_clear",
-              "long_tenure", "years_owned"):
+              "long_tenure", "years_owned", "has_equity", "underwater",
+              "debt_to_value", "confirmed_rental", "tax_delinquent_years"):
         if k in derived and not out.get(k):
             out[k] = derived[k]
     out["urgency_score"] = v.score
