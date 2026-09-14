@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+reileads.sqlite3
+out/
+*.log
+
+# Raw page captures saved during source investigation, not used by any
+# pipeline code. Some contain real people's PII (probate case parties) or
+# are copies of third-party sites we don't have redistribution rights to
+# -- see CLAUDE.md/README.md for the ToS considerations this project
+# already takes seriously elsewhere. Safe to delete locally; kept out of
+# git either way.
+estate_detail.html
+estate_parties.html
+gpn_50.html
+gpn_detail.html
+gpn_result.html
+gpn_result2.html
+mont.html

@@ -1,0 +1,5 @@
+requests>=2.32
+python-dotenv>=1.0
+tenacity>=8.2
+lxml>=5.2
+playwright>=1.62
