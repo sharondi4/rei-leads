@@ -108,6 +108,9 @@ def _to_event(a: dict):
         # 2026-09-14 -- see cuyahoga.py for why that mattered.
         "last_sale_date": arcgis_date(a.get("SALEDATE")),
         "market_value": a.get("TOTALMARKET"),
+        # Ohio land-use code. 500/501 are residential VACANT LAND and make
+        # up most of this land-bank layer; 510/511/520/550 are dwellings.
+        "land_use": str(a.get("LANDUSE") or "").strip(),
         "homestead": str(a.get("HOMESTEAD") or "").strip().upper() == "Y",
         "bor_flag": a.get("BORFLAG"),
         # No boolean foreclosure field on this layer -- a positive

@@ -75,6 +75,47 @@ def clean_addr(*parts) -> str:
     return " ".join(out.split())
 
 
+# County address columns are not always addresses. Mahoning's carry tax
+# abatement notes ("CRA 75% N / C 15 YR TY00-14", city "SEE ABATED"),
+# confirmed 2026-09-14 after these reached real CRM contacts.
+_JUNK_ADDR_TOKENS = ("SEE ABATED", "ABATED", "CRA ", "TY00", "N / C", "%")
+# Rural routes and PO boxes are real deliverable mail without a house number.
+_ADDR_PREFIXES = ("PO BOX", "P O BOX", "POBOX", "RR", "R R", "RD ", "R D ",
+                  "RURAL", "HC ", "BOX ")
+
+
+def is_junk_text(s: str) -> bool:
+    """True when a county field holds bookkeeping notes rather than the
+    value the column claims to hold -- a city reading "SEE ABATED"."""
+    v = " ".join((s or "").split()).upper()
+    return any(t in v for t in _JUNK_ADDR_TOKENS)
+
+
+def looks_like_address(s: str) -> bool:
+    """True when a string plausibly is a mailing/street address.
+
+    A real street address starts with a house number; PO boxes and rural
+    routes are the legitimate exceptions. Anything carrying abatement or
+    tax-code text is data the county filed in the wrong column.
+    """
+    v = " ".join((s or "").split()).upper()
+    if not v:
+        return False
+    if any(t in v for t in _JUNK_ADDR_TOKENS):
+        return False
+    if v[0].isdigit():
+        return True
+    return v.startswith(_ADDR_PREFIXES)
+
+
+def has_house_number(s: str) -> bool:
+    """True when an address carries a street number, i.e. something is
+    built there. Vacant lots are published as a street name alone
+    ("EDGAR AVE"), so this doubles as a structure test in counties that
+    publish no land-use code."""
+    return bool(re.match(r"^\s*\d+\s*\S", s or ""))
+
+
 def year_of(v):
     """Best-effort calendar year out of the several date shapes county
     layers use. Returns None when there's nothing usable -- callers must

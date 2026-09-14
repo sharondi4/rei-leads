@@ -31,7 +31,31 @@ import datetime as dt
 
 from .core.store import Store
 from .core.classify import score, tier
-from .core.normalize import year_of
+from .core.normalize import year_of, has_house_number, looks_like_address
+
+# Ohio land-use codes for land with nothing built on it. Numeric prefixes
+# because counties append their own sub-codes. Anything 5xx that isn't in
+# here is residential WITH a structure (510 single family, 520 two family,
+# 550 multi), which is what we want.
+_VACANT_LAND_CODES = ("500", "501", "100", "101", "300", "400")
+
+# Text land-use descriptions, for counties that publish words not codes.
+_VACANT_LAND_WORDS = ("VACANT", "UNIMPROVED", "RAW LAND")
+
+
+def is_vacant_land(p: dict) -> bool:
+    """True when the county itself says nothing is built on the parcel.
+
+    Checked before the address heuristic because it's the county's own
+    classification rather than an inference. Mahoning's land-bank layer
+    is majority code 500 -- empty lots, which reached real CRM contacts
+    on 2026-09-14 before this existed.
+    """
+    code = str(p.get("land_use") or "").strip()
+    if code and code[:3] in _VACANT_LAND_CODES:
+        return True
+    desc = f"{p.get('land_use') or ''} {p.get('property_class') or ''}".upper()
+    return any(w in desc for w in _VACANT_LAND_WORDS)
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +132,8 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
         sql += " AND p.county IN (%s)" % ",".join("?" * len(counties))
         params = list(counties)
 
-    stats = {"scanned": 0, "no_owner_name": 0, "owner_changed": 0,
+    stats = {"scanned": 0, "no_owner_name": 0, "vacant_land": 0,
+             "no_street_number": 0, "owner_changed": 0,
              "excluded": 0, "qualified": 0}
     scored = []
 
@@ -121,6 +146,17 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
         # and lastName are not allowed"). Summit is the whole county.
         if not (p.get("owner_full") or p.get("owner_last") or p.get("owner_first")):
             stats["no_owner_name"] += 1
+            continue
+
+        if is_vacant_land(p):
+            stats["vacant_land"] += 1
+            continue
+
+        # No street number means no structure -- a lot, not a house. Kept
+        # as a separate check from is_vacant_land() because Cuyahoga
+        # publishes no land-use code at all.
+        if not has_house_number(p.get("site_address")):
+            stats["no_street_number"] += 1
             continue
 
         if not owner_unchanged_since_delinquency(p):
@@ -168,10 +204,11 @@ def collect(store: Store, limit: int = 150, counties=None) -> tuple[list, dict]:
 def run(store: Store, limit: int = 150, counties=None, preview: bool = False) -> int:
     leads, stats = collect(store, limit=limit, counties=counties)
 
-    log.info("backlog: %s scanned, %s no owner name, %s sold since delinquency, "
-             "%s excluded by classifier, %s qualified parcels across %s owners "
-             "(%s released this run)",
+    log.info("backlog: %s scanned | rejected: %s no owner name, %s vacant land, "
+             "%s no street number, %s sold since delinquency, %s classifier | "
+             "%s qualified parcels across %s owners (%s released)",
              f"{stats['scanned']:,}", f"{stats['no_owner_name']:,}",
+             f"{stats['vacant_land']:,}", f"{stats['no_street_number']:,}",
              f"{stats['owner_changed']:,}", f"{stats['excluded']:,}",
              f"{stats['qualified']:,}", f"{stats.get('distinct_owners', 0):,}",
              len(leads))

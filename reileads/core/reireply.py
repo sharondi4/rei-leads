@@ -13,6 +13,7 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from . import config
+from .normalize import looks_like_address, is_junk_text
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +109,8 @@ def to_contact(ev: dict, location_id: str) -> dict:
         tags.append("portfolio-owner")     # several delinquent parcels, one owner
 
     name = p.get("owner_full") or "Unknown Owner"
+    mail = p.get("mail_address") or ""
+    mail_ok = looks_like_address(mail) and not is_junk_text(p.get("mail_city"))
     contact = {
         "locationId": location_id,
         # No "name" field: confirmed live 2026-09-14 that HighLevel doesn't
@@ -126,11 +129,15 @@ def to_contact(ev: dict, location_id: str) -> dict:
         # alongside the firstName workaround above so an entity owner shows
         # up correctly in both places, not just firstName.
         "companyName": name if p.get("is_entity") else None,
-        # Mailing address -- where the owner actually receives mail.
-        "address1": p.get("mail_address") or p.get("site_address") or None,
-        "city": p.get("mail_city") or None,
-        "state": p.get("mail_state") or None,
-        "postalCode": str(p.get("mail_zip") or "") or None,
+        # Mailing address -- where the owner actually receives mail. Falls
+        # back to the property address when the county's mailing columns
+        # hold something that isn't an address: Mahoning files tax
+        # abatement notes there ("CRA 75% N / C 15 YR TY00-14", city "SEE
+        # ABATED"), which reached live contacts on 2026-09-14.
+        "address1": mail if mail_ok else (p.get("site_address") or None),
+        "city": (p.get("mail_city") or None) if mail_ok else None,
+        "state": (p.get("mail_state") or None) if mail_ok else None,
+        "postalCode": (str(p.get("mail_zip") or "") or None) if mail_ok else None,
         "source": f"REI Leads {state} {county} feed",
         "tags": tags,
         "customFields": [
