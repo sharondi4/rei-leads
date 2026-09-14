@@ -89,16 +89,20 @@ SEARCH_URL = "https://www.georgiaprobaterecords.com/Estates/SearchEstates.aspx"
 # populates the PARTIES table -- coverage is per-court and uneven. Every
 # entry below was probed live before being added; see module docstring.
 COUNTIES = {
-    "douglas":  "1120",
-    "clayton":  "1109",
-    "henry":    "1017",
-    "paulding": "1051",
-    "coweta":   "1054",
-    "carroll":  "1026",
-    "newton":   "1067",
-    "bartow":   "1001",
-    "hall":     "1009",
-    "fayette":  "1024",
+    "douglas": "1120",
+}
+
+# Probed live 2026-09-14 and confirmed to return ZERO estate rows -- not
+# over 30 days, and for Clayton and Hall not over a full 365 days either,
+# while Douglas returned 200 on the same code path. They are wired into
+# the vendor for e-filing but publish no estate records through it.
+# Recorded here so nobody spends the afternoon rediscovering it; adding
+# any of them back costs ~30s of browser startup per daily run for
+# nothing.
+EMPTY_COUNTIES = {
+    "clayton": "1109", "henry": "1017", "paulding": "1051",
+    "coweta": "1054", "carroll": "1026", "newton": "1067",
+    "bartow": "1001", "hall": "1009", "fayette": "1024",
 }
 
 _CASE_NO_RE = re.compile(r"^\d{2}[A-Z]{1,3}\d+$")
