@@ -136,18 +136,25 @@ class DouglasProbate:
     label = "Douglas County GA Probate Court"
 
     @staticmethod
-    def fetch(county_key: str = "douglas", days_back: int = 7):
-        """Yield events for cases filed in the last `days_back` days.
+    def fetch(county_key: str = "douglas", days_back: int = 7,
+              offset_days: int = 0):
+        """Yield events for cases filed between `days_back` and
+        `offset_days` days ago.
 
         Filed-date range, not deceased-date -- filing is what makes a
         case newly discoverable, same reasoning as every date-diff
         source elsewhere in this codebase.
+
+        offset_days exists so a long lookback can be walked in month
+        chunks: paging ~20 deep through this RadGrid dies with the rows
+        detached from the DOM, so callers ask for one month at a time
+        rather than one large range. See pipeline_ga.run_probate().
         """
         from playwright.sync_api import sync_playwright
 
         court_id = COUNTIES[county_key]
-        today = dt.date.today()
-        start = today - dt.timedelta(days=days_back)
+        today = dt.date.today() - dt.timedelta(days=offset_days)
+        start = dt.date.today() - dt.timedelta(days=days_back)
         # Zero-padded MM/DD/YYYY -- confirmed required 2026-09-11: the
         # RadDatePicker silently rejects "3/20/2021" (no leading zero)
         # and the search then behaves as if no date range were given at

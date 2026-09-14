@@ -117,7 +117,8 @@ def run(store: Store, counties=None, days_back=3) -> int:
     return new
 
 
-def collect_probate(county_key: str = "douglas", days_back: int = 7) -> list[dict]:
+def collect_probate(county_key: str = "douglas", days_back: int = 7,
+                    offset_days: int = 0) -> list[dict]:
     """Same shape as collect(), for sources/ga/douglas_probate.py.
 
     Kept separate from collect()/run() rather than merged in: probate
@@ -133,7 +134,8 @@ def collect_probate(county_key: str = "douglas", days_back: int = 7) -> list[dic
 
     leads, rejected = [], Counter()
 
-    for raw in DouglasProbate.fetch(county_key=county_key, days_back=days_back):
+    for raw in DouglasProbate.fetch(county_key=county_key, days_back=days_back,
+                                    offset_days=offset_days):
         # Same gate Ohio and the backlog use. require_same_owner is off:
         # there is no tax delinquency here to have predated a sale, and
         # the decedent's own last transfer is not a change of hands away
@@ -159,13 +161,27 @@ def run_probate(store: Store, county_key: str = "douglas", days_back: int = 7) -
     import json
     d = dt.date.today().isoformat()
     new = 0
-    try:
-        leads = collect_probate(county_key=county_key, days_back=days_back)
-    except Exception as e:
-        err = f"{type(e).__name__}: {e}"
-        log.error("GA probate (%s) fetch failed: %s", county_key, err)
-        store.log_run(f"ga_probate_{county_key}", 0, 0, "error", err)
-        return 0
+
+    # Long lookbacks are walked one month at a time. A single 365-day
+    # search returns ~200 rows over ~20 pages of a Telerik RadGrid, and
+    # clicking that deep reliably dies partway with the rows detached
+    # from the DOM (confirmed 2026-09-14, whole pull lost). A month's
+    # worth fits in a page or two, and a failed window costs only that
+    # window instead of everything.
+    windows = [(days_back, 0)] if days_back <= 45 else [
+        (min(days_back, off + 30), off) for off in range(0, days_back, 30)
+    ]
+
+    leads = []
+    for back, offset in windows:
+        try:
+            leads.extend(collect_probate(county_key=county_key, days_back=back,
+                                         offset_days=offset))
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            log.error("GA probate (%s) window -%s..-%s failed: %s",
+                      county_key, back, offset, err)
+            store.log_run(f"ga_probate_{county_key}", 0, 0, "error", err)
 
     for lead in leads:
         cur = store.db.execute(
