@@ -111,8 +111,19 @@ def run(store: Store, limit: int = 100, event_like: str = None,
 
     for lead in leads:
         p = lead["payload"]
+
+        # Never spend a credit looking for a company in a person index.
+        # "PALM PROPERTY MANAGEMENT LLC" has no date of birth and no
+        # mobile; the lookup either returns nothing or returns a stranger
+        # who happens to share a word with the company name. Entities are
+        # ~14% of the bank, so this is real money.
+        if p.get("is_entity"):
+            out["skipped_entity"] = out.get("skipped_entity", 0) + 1
+            continue
+
         q = _to_query(p)
         if not q["last_name"]:
+            out["skipped_no_name"] = out.get("skipped_no_name", 0) + 1
             continue
         try:
             # Real lookup even on a trial: estimate_cost returns a price

@@ -95,7 +95,7 @@ class DealMachine:
 
     def enrich_name(self, last_name: str, first_name: str = "",
                     zip_code: str = "", state: str = "",
-                    per_page: int = 3, estimate: bool = False) -> tuple[list, int]:
+                    per_page: int = 1, estimate: bool = False) -> tuple[list, int]:
         """Look up one named person. Returns (people, credits charged).
 
         One person per call, deliberately. This endpoint returns EVERY
