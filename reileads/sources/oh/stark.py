@@ -14,7 +14,8 @@ volume turns out too thin on the delinquency signal alone, that's the
 next thing to look at, not a reason to guess at its shape now.
 """
 from ...core.arcgis import ArcGISLayer
-from ...core.normalize import strip_parcel, split_owner, clean_addr, absentee, is_entity
+from ...core.normalize import (strip_parcel, split_owner, clean_addr, absentee,
+                               is_entity, arcgis_date)
 
 URL = ("https://utility.arcgis.com/usrsvcs/servers/"
        "067a37ee416e4d11bc23dd1446ad30ba/rest/services/"
@@ -88,6 +89,9 @@ class Stark:
                 "total_paid": a.get("TOTAL_PAID"),
                 "delinquent_since_year": a.get("CERTIFIED_DELINQUENT_YEAR"),
                 "last_sale_amount": a.get("MOST_RECENT_SALE_PRICE"),
+                # Fetched and dropped until 2026-09-14 -- see cuyahoga.py.
+                "last_sale_date": arcgis_date(a.get("MOST_RECENT_SALE_DATE")),
+                "certified_delinquent_date": arcgis_date(a.get("CERTIFIED_DELINQUENT_DATE")),
                 "market_value": a.get("APPRAISED_TOTAL_VALUE"),
                 "homestead": _yn(a.get("HOMESTEAD_EXEMPTION")),
                 "land_use": a.get("LAND_USE_DESCRIPTION"),

@@ -23,7 +23,8 @@ import logging
 import requests
 
 from ...core import config
-from ...core.normalize import strip_parcel, split_owner, clean_addr, absentee, is_entity
+from ...core.normalize import (strip_parcel, split_owner, clean_addr, absentee,
+                               is_entity, arcgis_date)
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +104,9 @@ def _to_event(a: dict):
         "delq_balance": balance,
         "delinquent_since_year": a.get("CERTDELQ_YEAR"),
         "last_sale_amount": a.get("SALEAMOUNT"),
+        # Fetched via outFields=* all along but never mapped until
+        # 2026-09-14 -- see cuyahoga.py for why that mattered.
+        "last_sale_date": arcgis_date(a.get("SALEDATE")),
         "market_value": a.get("TOTALMARKET"),
         "homestead": str(a.get("HOMESTEAD") or "").strip().upper() == "Y",
         "bor_flag": a.get("BORFLAG"),

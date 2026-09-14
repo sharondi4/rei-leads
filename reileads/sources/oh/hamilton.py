@@ -9,7 +9,8 @@ first two weeks to establish the real refresh interval before you promise
 anyone a same-day feed.
 """
 from ...core.arcgis import ArcGISLayer
-from ...core.normalize import strip_parcel, split_owner, clean_addr, absentee, is_entity
+from ...core.normalize import (strip_parcel, split_owner, clean_addr, absentee,
+                               is_entity, arcgis_date)
 
 URL = ("https://services.arcgis.com/JyZag7oO4NteHGiq/arcgis/rest/services/"
        "Open_Data_Feature_Collection/FeatureServer/0")
@@ -92,6 +93,9 @@ class Hamilton:
                 "rental_registered": 1 if _flag(a.get("RENT_REG_FLAG")) else 0,
                 "bor_flag": a.get("BOR_FLAG"),
                 "last_sale_amount": a.get("SALAMT"),
+                # SALDAT was fetched and dropped until 2026-09-14 -- see
+                # cuyahoga.py for why that mattered.
+                "last_sale_date": arcgis_date(a.get("SALDAT")),
                 "property_class": a.get("CLASS"),
                 "record_url": f"https://wedge1.hcauditor.org/view/re/{parcel}/2025/payment_details",
             }

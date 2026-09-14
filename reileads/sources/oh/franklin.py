@@ -31,7 +31,8 @@ import requests
 
 from ...core import config
 from ...core.arcgis import ArcGISLayer
-from ...core.normalize import strip_parcel, split_owner, clean_addr, absentee, is_entity
+from ...core.normalize import (strip_parcel, split_owner, clean_addr, absentee,
+                               is_entity, arcgis_date)
 
 log = logging.getLogger(__name__)
 
@@ -190,6 +191,9 @@ class Franklin:
                 "balance_due": balance,
                 "prior_total": prior,
                 "market_value": g.get("TOTVALUEBASE"),
+                # Fetched and dropped until 2026-09-14 -- see cuyahoga.py.
+                "last_sale_date": arcgis_date(g.get("SALEDATE")),
+                "last_sale_amount": g.get("SALEPRICE"),
                 "property_class": g.get("CLASSDSCRP"),
                 "owner_occupied": g.get("OWNEROCCUPIED"),
                 # Franklin has no foreclosure flag. A carried prior-year

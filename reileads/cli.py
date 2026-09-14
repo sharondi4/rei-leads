@@ -13,6 +13,7 @@ from .core.store import Store
 from .core.push import push
 from . import pipeline_oh
 from . import pipeline_ga
+from . import backfill
 
 OH_COUNTIES = sorted(pipeline_oh.REGISTRY)
 GA_COUNTIES = ["fulton", "cobb", "cherokee", "douglas"]  # wired legal-ad sites
@@ -21,7 +22,8 @@ GA_COUNTIES = ["fulton", "cobb", "cherokee", "douglas"]  # wired legal-ad sites
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="reileads",
         description="Multi-state real estate lead pipeline -> REI Reply")
-    ap.add_argument("command", choices=["run", "status", "push", "seed-franklin"])
+    ap.add_argument("command", choices=["run", "status", "push", "seed-franklin",
+                                        "backfill"])
     ap.add_argument("--state", choices=["oh", "ga"], action="append",
                     help="repeatable; default both")
     ap.add_argument("--county", action="append",
@@ -29,6 +31,10 @@ def main(argv=None):
     ap.add_argument("--days-back", type=int, default=3,
                     help="GA legal-ad / probate-court lookback window")
     ap.add_argument("--limit", type=int, default=config.MAX_PUSH_PER_RUN)
+    ap.add_argument("--backlog", type=int, default=0,
+                    help="release N backlog leads alongside a run (0 = off)")
+    ap.add_argument("--preview", action="store_true",
+                    help="backfill: report counts and a sample, insert nothing")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args(argv)
 
@@ -50,6 +56,13 @@ def main(argv=None):
     if a.command == "status":
         _status(store)
         return 0
+
+    if a.command == "backfill":
+        n = backfill.run(store, limit=a.backlog or 150, counties=a.county,
+                         preview=a.preview)
+        if a.preview:
+            return 0
+        print(f"\n{n} backlog leads released")
 
     if a.command == "run":
         total = 0
@@ -75,6 +88,13 @@ def main(argv=None):
             # see pipeline_ga.py's collect_probate() docstring.
             total += pipeline_ga.run_probate(store, days_back=a.days_back)
         print(f"\n{total} new events")
+        # Backlog release runs after the fresh pass so a parcel that just
+        # produced a real event today is already in `events` and won't be
+        # double-emitted as backlog.
+        if a.backlog:
+            released = backfill.run(store, limit=a.backlog, counties=a.county)
+            print(f"{released} backlog leads released")
+            total += released
 
     res = push(store, a.limit)
     print(f"\npending={res['pending']} pushed={res['pushed']} "

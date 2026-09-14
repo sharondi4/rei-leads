@@ -1,5 +1,6 @@
 """Parcel, name and address normalization shared across counties."""
 import re
+import datetime as dt
 
 _SUFFIXES = {"JR", "SR", "II", "III", "IV", "TRUSTEE", "TR", "ETAL", "ET AL"}
 # Matched as whole words so that "TRUSTEE" (a human acting as one) is not
@@ -72,6 +73,45 @@ def split_owner(name: str):
 def clean_addr(*parts) -> str:
     out = " ".join(str(p).strip() for p in parts if p and str(p).strip() and str(p).strip().upper() != "NONE")
     return " ".join(out.split())
+
+
+def year_of(v):
+    """Best-effort calendar year out of the several date shapes county
+    layers use. Returns None when there's nothing usable -- callers must
+    treat that as unknown, never as a default.
+
+    Epoch milliseconds are checked BEFORE any regex: a raw ArcGIS
+    timestamp like 1421971200000 contains the digits "1971", so a naive
+    4-digit-year search reads it as the year 1971.
+    """
+    if v in (None, "", 0):
+        return None
+    s = str(v).strip()
+    if s.isdigit():
+        if len(s) >= 11:                       # epoch milliseconds
+            try:
+                return dt.datetime.fromtimestamp(int(s) / 1000, dt.timezone.utc).year
+            except (ValueError, OverflowError, OSError):
+                return None
+        if len(s) == 4:                        # bare year, e.g. "2014"
+            return int(s)
+    m = re.match(r"(\d{4})-", s) or re.search(r"\b(19|20)\d{2}\b", s)
+    return int(m.group(0)[:4]) if m else None
+
+
+def arcgis_date(v) -> str:
+    """ArcGIS date fields arrive as epoch milliseconds. Return ISO
+    'YYYY-MM-DD', or "" when absent -- classify.py reads a missing sale
+    date as unknown, so returning "" is safe and inventing one is not."""
+    if v in (None, "", 0):
+        return ""
+    s = str(v).strip()
+    if s.isdigit() and len(s) >= 11:
+        try:
+            return dt.datetime.fromtimestamp(int(s) / 1000, dt.timezone.utc).date().isoformat()
+        except (ValueError, OverflowError, OSError):
+            return ""
+    return s[:10]
 
 
 def absentee(site_city: str, mail_city: str, mail_state: str) -> bool:

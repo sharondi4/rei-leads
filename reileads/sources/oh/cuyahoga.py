@@ -11,7 +11,8 @@ carries no such restriction and gives us the same signal, because BOR
 expedited tax foreclosures are reflected in foreclosure_flag.
 """
 from ...core.arcgis import ArcGISLayer
-from ...core.normalize import strip_parcel, split_owner, clean_addr, absentee, is_entity
+from ...core.normalize import (strip_parcel, split_owner, clean_addr, absentee,
+                               is_entity, arcgis_date)
 
 URL = ("https://gis.cuyahogacounty.gov/server/rest/services/CCFO/"
        "Parcel_Fabric_Taxparcels/FeatureServer/1")
@@ -78,6 +79,12 @@ class Cuyahoga:
                 "tax_cert_pending": int(a.get("cert_pend_flag") or 0),
                 "payment_plan": int(a.get("payment_plan_flag") or 0),
                 "last_sale_amount": a.get("last_sales_amount"),
+                # Was fetched and dropped until 2026-09-14. classify.py's
+                # recent-purchase exclusion and long-tenure amplifier both
+                # read last_sale_date, so without this they silently never
+                # fired on Ohio leads.
+                "last_sale_date": arcgis_date(a.get("last_transfer_date")),
+                "delinquent_since_year": a.get("prev_tax_year"),
                 "record_url": _myplace(a.get("myplaceppn"), a.get("parcel_id")),
             }
             yield {
