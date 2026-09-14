@@ -71,12 +71,34 @@ log = logging.getLogger(__name__)
 
 SEARCH_URL = "https://www.georgiaprobaterecords.com/Estates/SearchEstates.aspx"
 
-# CourtID values from the search form's county dropdown, confirmed by
-# decoding __VIEWSTATE on 2026-09-11. Only add an entry here after
-# confirming that county actually returns rows on this vendor's system --
-# see module docstring.
+# CourtID values from the search form's county dropdown. Douglas was
+# decoded from __VIEWSTATE 2026-09-11; the rest were read from the
+# dropdown's own RadDropDownList ClientState on 2026-09-14, which anchors
+# against Douglas's known-good value.
+#
+# The IDs are informational -- fetch() selects the county by its visible
+# label, not this number. They're kept because they're the only stable
+# identifier if the labels ever change.
+#
+# 94 of Georgia's 159 counties are on the estates search. Absent, and
+# confirmed so rather than assumed: Fulton, Cobb, Cherokee, DeKalb and
+# Gwinnett (Tyler Odyssey / re:SearchGA instead), plus Rockdale, and
+# Forsyth (files on this vendor but publishes no estates).
+#
+# Membership in the dropdown does NOT prove a county returns rows or
+# populates the PARTIES table -- coverage is per-court and uneven. Every
+# entry below was probed live before being added; see module docstring.
 COUNTIES = {
-    "douglas": "1120",
+    "douglas":  "1120",
+    "clayton":  "1109",
+    "henry":    "1017",
+    "paulding": "1051",
+    "coweta":   "1054",
+    "carroll":  "1026",
+    "newton":   "1067",
+    "bartow":   "1001",
+    "hall":     "1009",
+    "fayette":  "1024",
 }
 
 _CASE_NO_RE = re.compile(r"^\d{2}[A-Z]{1,3}\d+$")
