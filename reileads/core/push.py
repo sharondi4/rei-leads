@@ -49,15 +49,17 @@ def push(store: Store, limit: int) -> dict:
     # called, and HighLevel deduplicates on phone or email -- so pushing
     # one spends a CRM record and guarantees a duplicate later when the
     # same owner reappears. Leads wait here until skiptrace has run.
+    # A phone specifically, not "phone or email". An emailable lead is
+    # not a callable one, and this is a calling operation -- a contact
+    # with no number is a CRM row nobody will ever action. Leads without
+    # one stay in `events` (still in the CSV, still mailable) rather than
+    # being deleted, so they can be pushed later if a number turns up.
     if config.REQUIRE_SKIPTRACE:
-        held = [e for e in pending if not e["payload"].get("phone")
-                and not e["payload"].get("email")]
+        held = [e for e in pending if not e["payload"].get("phone")]
         if held:
-            log.warning("holding %s lead(s) with no phone or email -- run "
-                        "`reileads.cli skiptrace` first (REQUIRE_SKIPTRACE=1)",
-                        len(held))
-        pending = [e for e in pending
-                   if e["payload"].get("phone") or e["payload"].get("email")]
+            log.warning("holding %s lead(s) with no phone number "
+                        "(REQUIRE_SKIPTRACE=1)", len(held))
+        pending = [e for e in pending if e["payload"].get("phone")]
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M")
     out = config.OUT_DIR / f"leads-{stamp}.csv"
     csv_path = write_csv(pending, out)
