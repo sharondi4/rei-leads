@@ -14,6 +14,7 @@ from .core.push import push
 from . import pipeline_oh
 from . import pipeline_ga
 from . import backfill
+from . import skiptrace as skiptrace_mod
 
 OH_COUNTIES = sorted(pipeline_oh.REGISTRY)
 GA_COUNTIES = ["fulton", "cobb", "cherokee", "douglas"]  # wired legal-ad sites
@@ -23,7 +24,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="reileads",
         description="Multi-state real estate lead pipeline -> REI Reply")
     ap.add_argument("command", choices=["run", "status", "push", "seed-franklin",
-                                        "backfill"])
+                                        "backfill", "skiptrace"])
     ap.add_argument("--state", choices=["oh", "ga"], action="append",
                     help="repeatable; default both")
     ap.add_argument("--county", action="append",
@@ -35,6 +36,9 @@ def main(argv=None):
                     help="release N backlog leads alongside a run (0 = off)")
     ap.add_argument("--preview", action="store_true",
                     help="backfill: report counts and a sample, insert nothing")
+    ap.add_argument("--event-like", default=None,
+                    help="skiptrace: restrict to events whose name matches, "
+                         "e.g. 'ga_%%' or 'backlog_%%'")
     ap.add_argument("--min-score", type=int, default=0,
                     help="backlog: only release leads scoring at least this "
                          "(35 = tier B and above, i.e. worth calling)")
@@ -58,6 +62,11 @@ def main(argv=None):
 
     if a.command == "status":
         _status(store)
+        return 0
+
+    if a.command == "skiptrace":
+        skiptrace_mod.run(store, limit=a.backlog or 100,
+                          event_like=a.event_like, trial=a.preview)
         return 0
 
     if a.command == "backfill":

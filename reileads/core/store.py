@@ -56,7 +56,20 @@ CREATE TABLE IF NOT EXISTS overlays (
   detail      TEXT,
   PRIMARY KEY (county, parcel, signal)
 );
+CREATE TABLE IF NOT EXISTS skiptraces (
+  county      TEXT NOT NULL,
+  parcel      TEXT NOT NULL,
+  traced_at   TEXT NOT NULL,
+  status      TEXT NOT NULL,
+  phone       TEXT,
+  phone_type  TEXT,
+  do_not_call INTEGER NOT NULL DEFAULT 0,
+  email       TEXT,
+  credits     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (county, parcel)
+);
 CREATE INDEX IF NOT EXISTS idx_events_date ON events(detected_on);
+CREATE INDEX IF NOT EXISTS idx_skiptraces_date ON skiptraces(traced_at);
 CREATE INDEX IF NOT EXISTS idx_overlays_parcel ON overlays(county, parcel);
 """
 
