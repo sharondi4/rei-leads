@@ -28,6 +28,7 @@ and merging the results, rather than one query for
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import time
 
@@ -53,29 +54,58 @@ METROS = {
 # Each ANDed with is_absentee_owner and a minimum equity floor -- an
 # absentee owner with real equity and ANY of these is a plausible seller,
 # not just a name appearing on a distress list with nothing else true
-# about them.
-# require_equity=True stacks the 30%-equity floor on top of the
-# criterion. Confirmed live 2026-09-16: requiring it on preforeclosure
-# returned 2 matches total across all 5 metros combined, against 257 for
-# tax_delinquent -- preforeclosure and vacancy are already strong
-# standalone signals (someone in preforeclosure or sitting on a vacant
-# house is motivated regardless of how much equity is left), and AND-ing
-# a third condition on top was strangling an already-hot signal rather
-# than sharpening it. Tax delinquency keeps the equity floor -- it's the
-# weakest of the three signals alone, so it needs the extra qualifier.
-HOT_CRITERIA = [
-    ("preforeclosure", {"filter_id": "is_preforeclosure", "value": True}, False),
-    ("tax_delinquent",  {"filter_id": "is_tax_delinquent", "value": True}, True),
-    ("vacant",          {"filter_id": "is_vacant_home", "value": True}, False),
-]
-
+# about them. Each criterion gets ONLY the extra filters that don't
+# demographically contradict it -- confirmed live 2026-09-16 that AND-ing
+# equity onto preforeclosure returned 2 matches across all 5 metros
+# combined (against 257 for tax delinquency alone). Two separate
+# contradictions, not one:
+#   - equity: someone in preforeclosure is usually there BECAUSE they're
+#     overleveraged -- requiring 30%+ equity selects against the exact
+#     population the preforeclosure filter is trying to find.
+#   - absentee: an investor in trouble sells before it reaches formal
+#     preforeclosure; the people who actually get there skew
+#     owner-occupied. Requiring "doesn't live there" on top removes most
+#     of an already-thin pool.
+# Vacant doesn't have either problem -- a vacant house is definitionally
+# not owner-occupied, so absentee is redundant, not contradictory, and
+# equity is unconstrained. Tax delinquency alone is the weakest signal of
+# the three (people fall behind on taxes for all kinds of reasons) and
+# has by far the deepest pool, so it's the one that carries the full
+# stack Sharon asked for -- absentee + equity + long tenure.
+#
 # Confirmed 2026-09-14 via GET /v1/filters (free, no credits) rather than
 # trusting the docs' illustrative example -- the real filter is
 # has_absentee_owners, not is_absentee_owner, and estimated_equity_percentage,
 # not equity_percent. The docs example 400'd on both.
 ABSENTEE_FILTER = {"filter_id": "has_absentee_owners", "value": True}
-EQUITY_FILTER_ID = "estimated_equity_percentage"
 MIN_EQUITY_PERCENT = 30
+EQUITY_FILTER = {"filter_id": "estimated_equity_percentage",
+                 "operator": "greater_than_or_equal", "value": MIN_EQUITY_PERCENT}
+
+# last_sale_date is the only tenure proxy DealMachine exposes -- confirmed
+# live 2026-09-16 via GET /v1/filters, no dedicated years-owned field
+# exists. "Owned 10+ years" means the last recorded sale was at least 10
+# years before today. allowed_operators for this filter (also confirmed
+# live) are date_range/is_after/is_before/equals/relative_time --
+# is_before with a computed cutoff date is the direct translation.
+MIN_YEARS_OWNED = 10
+TENURE_FILTER = {
+    "filter_id": "last_sale_date", "operator": "is_before",
+    "value": (dt.date.today() - dt.timedelta(days=365 * MIN_YEARS_OWNED)).isoformat(),
+}
+
+# Order matters here: tax_delinquent is listed LAST. search_hot() below
+# merges all three and sorts ties (most leads match only one criterion)
+# by insertion order, so listing the highest-volume criterion last means
+# preforeclosure and vacant fill the mix first instead of being crowded
+# out by tax delinquency's much larger raw match count.
+HOT_CRITERIA = [
+    ("preforeclosure", {"filter_id": "is_preforeclosure", "value": True}, []),
+    ("vacant",          {"filter_id": "is_vacant_home", "value": True},
+     [ABSENTEE_FILTER]),
+    ("tax_delinquent",  {"filter_id": "is_tax_delinquent", "value": True},
+     [ABSENTEE_FILTER, EQUITY_FILTER, TENURE_FILTER]),
+]
 
 # Contact fields plus free address context. Deliberately excludes value,
 # equity, tax, mortgage, sale and listing fields -- those are what would
@@ -114,12 +144,8 @@ def search_hot(metro: str, limit: int = 50, page: int = 1) -> tuple[list[dict], 
     by_person: dict = {}
     total_credits = 0
 
-    for label, criterion, require_equity in HOT_CRITERIA:
-        filters = [criterion, ABSENTEE_FILTER]
-        if require_equity:
-            filters.append({"filter_id": EQUITY_FILTER_ID,
-                            "operator": "greater_than_or_equal",
-                            "value": MIN_EQUITY_PERCENT})
+    for label, criterion, extra_filters in HOT_CRITERIA:
+        filters = [criterion, *extra_filters]
         body = {
             "locations": locations,
             "filters": filters,
