@@ -11,6 +11,14 @@ _ENTITY_WORDS = {
     "PARTNERSHIP", "PROPERTIES", "HOLDINGS", "CHURCH", "MINISTRIES",
     "AUTHORITY", "DEVELOPMENT", "INVESTMENTS", "ENTERPRISES", "REALTY",
     "MORTGAGE", "SERVICING", "FUND", "GROUP", "VENTURES",
+    # Added 2026-09-15: "YOUNGSTOWN CHOICE HOMES" (a real 68-parcel
+    # landlord) has no corporate suffix in Mahoning's own OWNNAME1 field
+    # at all, so it fell through every check above, got treated as a
+    # person, and split_owner() produced first="Choice" last="Youngstown"
+    # -- garbage that later 400'd a skip-trace call and, on that day's
+    # code, crashed the entire batch (see skiptrace.py's run()).
+    "HOMES", "HOME", "RENTALS", "MANAGEMENT", "CAPITAL", "SOLUTIONS",
+    "BUILDERS", "CONSTRUCTION", "CONTRACTING",
 }
 _ENTITY_PHRASES = (
     "CITY OF", "VILLAGE OF", "COUNTY OF", "STATE OF", "LAND BANK",

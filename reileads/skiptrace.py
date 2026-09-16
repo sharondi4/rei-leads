@@ -59,6 +59,14 @@ def pending(store: Store, limit: int, event_like: str = None) -> list:
     return rows[:limit]
 
 
+_US_STATES = {
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
+    "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV",
+    "NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN",
+    "TX","UT","VT","VA","WA","WV","WI","WY","DC",
+}
+
+
 def _to_query(p: dict) -> dict:
     """What we hand DealMachine: a name, narrowed by where they get mail.
 
@@ -72,12 +80,16 @@ def _to_query(p: dict) -> dict:
     MANAGEMENT LLC" searches a person index for a company and returns
     nothing worth a credit.
     """
-    state = p.get("mail_state") or p.get("state") or ""
+    # Garbage in either field 400s the whole request rather than just
+    # matching nothing -- confirmed live 2026-09-15 with mail_state="AB",
+    # a fragment of a mis-parsed county address field, not a real state.
+    # Validated here rather than trusted from any county source.
+    state = (p.get("mail_state") or p.get("state") or "").strip().upper()
     zipc = str(p.get("mail_zip") or p.get("site_zip") or "").strip()
     return {
         "first_name": (p.get("owner_first") or "").strip(),
         "last_name": (p.get("owner_last") or "").strip(),
-        "state": state,
+        "state": state if state in _US_STATES else "",
         "zip": zipc if zipc[:5].isdigit() else "",
     }
 
@@ -136,9 +148,18 @@ def run(store: Store, limit: int = 100, event_like: str = None,
                 last_name=q["last_name"], first_name=q["first_name"],
                 zip_code=q["zip"], state=q["state"])
         except Exception as e:
-            log.error("skip trace failed for %s/%s: %s",
-                      lead["county"], lead["parcel"], e)
-            break
+            # One bad record must never cost the rest of the batch --
+            # confirmed live 2026-09-15: a single mis-parsed entity
+            # (Youngstown Choice Homes, no corporate suffix in the
+            # county's field, split into first="Choice" last="Youngstown"
+            # with a garbage state code) 400'd, `break` fired, and the
+            # other 24 good leads in that morning's batch were never
+            # even attempted. Log it, count it, keep going.
+            log.error("skip trace failed for %s/%s (%s): %s -- skipping, "
+                      "continuing batch", lead["county"], lead["parcel"],
+                      p.get("owner_full"), e)
+            out["errors"] = out.get("errors", 0) + 1
+            continue
 
         out["credits"] += credits
         res = people[0] if people else {}
