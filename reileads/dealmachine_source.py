@@ -28,7 +28,6 @@ and merging the results, rather than one query for
 """
 from __future__ import annotations
 
-import datetime as dt
 import logging
 import time
 
@@ -82,17 +81,11 @@ MIN_EQUITY_PERCENT = 30
 EQUITY_FILTER = {"filter_id": "estimated_equity_percentage",
                  "operator": "greater_than_or_equal", "value": MIN_EQUITY_PERCENT}
 
-# last_sale_date is the only tenure proxy DealMachine exposes -- confirmed
-# live 2026-09-16 via GET /v1/filters, no dedicated years-owned field
-# exists. "Owned 10+ years" means the last recorded sale was at least 10
-# years before today. allowed_operators for this filter (also confirmed
-# live) are date_range/is_after/is_before/equals/relative_time --
-# is_before with a computed cutoff date is the direct translation.
-MIN_YEARS_OWNED = 10
-TENURE_FILTER = {
-    "filter_id": "last_sale_date", "operator": "is_before",
-    "value": (dt.date.today() - dt.timedelta(days=365 * MIN_YEARS_OWNED)).isoformat(),
-}
+# A 10-year tenure filter was here and got removed 2026-09-16: it would
+# have excluded a portfolio owner who bought 3 years ago and is already
+# tax-delinquent -- exactly the kind of lead Sharon wants, not one to
+# screen out. Tax delinquency keeps absentee + equity only; how long
+# they've owned it doesn't determine whether they're a real seller.
 
 # Order matters here: tax_delinquent is listed LAST. search_hot() below
 # merges all three and sorts ties (most leads match only one criterion)
@@ -104,7 +97,7 @@ HOT_CRITERIA = [
     ("vacant",          {"filter_id": "is_vacant_home", "value": True},
      [ABSENTEE_FILTER]),
     ("tax_delinquent",  {"filter_id": "is_tax_delinquent", "value": True},
-     [ABSENTEE_FILTER, EQUITY_FILTER, TENURE_FILTER]),
+     [ABSENTEE_FILTER, EQUITY_FILTER]),
 ]
 
 # Contact fields plus free address context. Deliberately excludes value,
