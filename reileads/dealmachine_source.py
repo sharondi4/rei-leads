@@ -54,10 +54,19 @@ METROS = {
 # absentee owner with real equity and ANY of these is a plausible seller,
 # not just a name appearing on a distress list with nothing else true
 # about them.
+# require_equity=True stacks the 30%-equity floor on top of the
+# criterion. Confirmed live 2026-09-16: requiring it on preforeclosure
+# returned 2 matches total across all 5 metros combined, against 257 for
+# tax_delinquent -- preforeclosure and vacancy are already strong
+# standalone signals (someone in preforeclosure or sitting on a vacant
+# house is motivated regardless of how much equity is left), and AND-ing
+# a third condition on top was strangling an already-hot signal rather
+# than sharpening it. Tax delinquency keeps the equity floor -- it's the
+# weakest of the three signals alone, so it needs the extra qualifier.
 HOT_CRITERIA = [
-    ("preforeclosure", {"filter_id": "is_preforeclosure", "value": True}),
-    ("tax_delinquent",  {"filter_id": "is_tax_delinquent", "value": True}),
-    ("vacant",          {"filter_id": "is_vacant_home", "value": True}),
+    ("preforeclosure", {"filter_id": "is_preforeclosure", "value": True}, False),
+    ("tax_delinquent",  {"filter_id": "is_tax_delinquent", "value": True}, True),
+    ("vacant",          {"filter_id": "is_vacant_home", "value": True}, False),
 ]
 
 # Confirmed 2026-09-14 via GET /v1/filters (free, no credits) rather than
@@ -86,9 +95,17 @@ def _addr(src: dict) -> dict:
     }
 
 
-def search_hot(metro: str, limit: int = 50) -> tuple[list[dict], int]:
+def search_hot(metro: str, limit: int = 50, page: int = 1) -> tuple[list[dict], int]:
     """One metro, every hot criterion, deduped by person, most stacked
-    signals first. Returns (people, total credits spent)."""
+    signals first. Returns (people, total credits spent).
+
+    `page` matters for repeat runs: this always asks the same filters in
+    the same order, so page=1 every day returns the same top-ranked
+    people -- who are already in `events` and get skipped downstream,
+    which silently shrinks day 2's yield toward zero. Callers doing a
+    multi-day pull should advance page rather than trusting a single
+    page=1 call to keep producing new people forever.
+    """
     if metro not in METROS:
         raise ValueError(f"unknown metro {metro!r}, have: {sorted(METROS)}")
 
@@ -97,20 +114,20 @@ def search_hot(metro: str, limit: int = 50) -> tuple[list[dict], int]:
     by_person: dict = {}
     total_credits = 0
 
-    for label, criterion in HOT_CRITERIA:
+    for label, criterion, require_equity in HOT_CRITERIA:
+        filters = [criterion, ABSENTEE_FILTER]
+        if require_equity:
+            filters.append({"filter_id": EQUITY_FILTER_ID,
+                            "operator": "greater_than_or_equal",
+                            "value": MIN_EQUITY_PERCENT})
         body = {
             "locations": locations,
-            "filters": [
-                criterion,
-                ABSENTEE_FILTER,
-                {"filter_id": EQUITY_FILTER_ID, "operator": "greater_than_or_equal",
-                 "value": MIN_EQUITY_PERCENT},
-            ],
+            "filters": filters,
             "anchor": "people",
             "contact_audience": "owners",
             "fields": PERSON_FIELDS,
             "per_page": min(limit, 100),
-            "page": 1,
+            "page": page,
         }
         try:
             data = dm._post("/properties/search", body)

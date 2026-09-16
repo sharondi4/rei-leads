@@ -41,6 +41,9 @@ def main(argv=None):
     ap.add_argument("--event-like", default=None,
                     help="skiptrace: restrict to events whose name matches, "
                          "e.g. 'ga_%%' or 'backlog_%%'")
+    ap.add_argument("--target", type=int, default=0,
+                    help="dealmachine: total new leads across all given metros, "
+                         "redistributing shortfall rather than a fixed per-metro count")
     ap.add_argument("--min-score", type=int, default=0,
                     help="backlog: only release leads scoring at least this "
                          "(35 = tier B and above, i.e. worth calling)")
@@ -72,7 +75,13 @@ def main(argv=None):
 
     if a.command == "dealmachine":
         metros = a.county or ["cleveland", "cincinnati", "columbus", "savannah", "atlanta"]
-        n = pipeline_dealmachine.run(store, metros, per_metro_limit=a.backlog or 50)
+        if a.target:
+            # "If you finish the first list, do the second -- I don't
+            # care." One shortfall metro's deficit rolls onto the next
+            # rather than the day coming up short.
+            n = pipeline_dealmachine.fill_target(store, metros, target=a.target)
+        else:
+            n = pipeline_dealmachine.run(store, metros, per_metro_limit=a.backlog or 50)
         print(f"\n{n} dealmachine-sourced leads inserted")
         res = push(store, a.limit)
         print(f"pending={res['pending']} pushed={res['pushed']} failed={res['failed']} dry_run={res['dry_run']}")
