@@ -36,10 +36,16 @@ METRO_META = {
 
 
 def _insert_new(store: Store, metro: str, state: str, label: str,
-                people: list) -> int:
+                people: list, cap: int = None) -> int:
+    """cap: stop once this many NEW rows have been inserted, even if
+    `people` has more -- the hard budget ceiling. Checked against actual
+    inserts, not len(people), since some of a batch will always be
+    duplicates or phone-less and shouldn't count against the cap."""
     d = dt.date.today().isoformat()
     kept = 0
     for person in people:
+        if cap is not None and kept >= cap:
+            break
         p = to_event_payload(person, metro, state, label)
         if not p.get("phone"):
             continue  # no number means no call, same rule as everywhere else
@@ -90,44 +96,69 @@ def run(store: Store, metros: list[str], per_metro_limit: int = 50) -> int:
 
 
 def fill_target(store: Store, metros: list[str], target: int,
-                per_page: int = 100, max_pages: int = 6) -> int:
-    """Hit `target` NEW leads total across `metros`, rather than a fixed
-    count per metro. "If you finish the first list, do the second" --
-    a metro that's run dry (Savannah has less inventory than Atlanta)
-    gets skipped and the shortfall rolls onto whichever metro still has
-    supply, instead of leaving the day short.
+                per_page: int = 100, max_rounds: int = 6) -> int:
+    """Hit `target` NEW leads total across `metros`, spread across ALL of
+    them rather than drained from whichever comes first.
 
-    Also the fix for day-over-day undershoot: page advances per metro
-    until it stops finding anyone NEW, rather than always re-asking
-    page=1 and re-finding people already delivered on a prior day.
+    Round-robin, one page per metro per round: confirmed live 2026-09-16
+    that a depth-first version (exhaust metro 1 before ever trying metro
+    2) let Cleveland and Atlanta each independently blow past their whole
+    150 share, so Cincinnati/Columbus/Savannah never got touched at all
+    that day -- "one-sided," Sharon's word for it, and correct. Round-
+    robin means every metro gets a turn before any one of them gets a
+    second page.
+
+    Also a hard cap, not a soft one: this is budget management, per
+    Sharon explicitly ("I don't have budget for more than 300 leads a
+    day") -- the same run that was one-sided also overshot 300 by 111,
+    because a full page was inserted before ever checking the total. Each
+    round now only takes however many leads remain against `target`, so
+    the total can undershoot on a thin day but can never exceed it.
+
+    Page still advances per metro across calls -- the fix for day-over-
+    day undershoot: re-asking page=1 every day just re-finds people
+    already delivered, so this keeps moving down the list.
     """
     new = 0
-    for metro in metros:
-        if metro not in METROS or new >= target:
-            continue
-        state, label = METRO_META[metro]
+    pages = {m: 1 for m in metros}
+    exhausted = set()
 
-        for page in range(1, max_pages + 1):
+    for round_num in range(1, max_rounds + 1):
+        if new >= target or len(exhausted) >= len(metros):
+            break
+        for metro in metros:
             if new >= target:
                 break
+            if metro not in METROS:
+                exhausted.add(metro)
+                continue
+            if metro in exhausted:
+                continue
+            state, label = METRO_META[metro]
+            page = pages[metro]
             try:
                 people, credits = search_hot(metro, limit=per_page, page=page)
             except Exception as e:
                 log.error("dealmachine %s page %s failed: %s", metro, page, type(e).__name__)
-                break
-            kept = _insert_new(store, metro, state, label, people)
+                exhausted.add(metro)
+                continue
+            pages[metro] += 1
+
+            room = target - new
+            kept = _insert_new(store, metro, state, label, people, cap=room)
             new += kept
-            log.info("dealmachine %s (%s) page %s: %s found, %s new, %s credits "
-                     "(running total %s/%s)",
-                     metro, label, page, len(people), kept, credits, new, target)
+            log.info("dealmachine %s (%s) round %s page %s: %s found, %s new "
+                     "(capped at %s room), %s credits (running total %s/%s)",
+                     metro, label, round_num, page, len(people), kept, room,
+                     credits, new, target)
             store.log_run(f"dealmachine_{metro}", len(people), kept, "ok",
-                          f"page {page}, {credits} credits")
+                          f"round {round_num} page {page}, {credits} credits")
             if kept == 0:
-                # Nothing new on this page -- either the metro's genuinely
-                # exhausted for today's filters, or we've reached the end
-                # of what DealMachine has. Move to the next metro rather
-                # than burning pages (and credits) for zero return.
-                break
+                # Nothing new this round -- either genuinely exhausted for
+                # today's filters, or the end of what DealMachine has.
+                # Drop it from the rotation rather than paying for empty
+                # pages on it every round.
+                exhausted.add(metro)
 
     if new < target:
         log.warning("dealmachine: hit %s/%s target, out of metros to try", new, target)
