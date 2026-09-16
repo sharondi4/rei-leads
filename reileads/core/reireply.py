@@ -17,6 +17,16 @@ from .normalize import looks_like_address, is_junk_text
 
 log = logging.getLogger(__name__)
 
+# For _human_case() below -- kept local rather than imported from
+# skiptrace.py's identical set, to avoid core/ depending on a module one
+# level up for a 50-item constant.
+_US_STATES = {
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
+    "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV",
+    "NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN",
+    "TX","UT","VT","VA","WA","WV","WI","WY","DC",
+}
+
 
 class ReiReply:
     def __init__(self, token=None, location_id=None):
@@ -119,6 +129,33 @@ def to_contact(ev: dict, location_id: str) -> dict:
         # in the CRM before anyone dials, not buried in a field.
         tags.append("dnc-do-not-dial")
 
+    def _human_case(s: str) -> str:
+        """County and DealMachine data arrives ALL CAPS ("836 E DUFFY
+        ST"). A text message quoting that verbatim ("...selling 836 E
+        DUFFY ST?") reads as machine-generated -- confirmed from an
+        actual outgoing message 2026-09-16. .title() alone is the right
+        transform for an address: it correctly renders street types and
+        directionals in normal mixed case ("836 E Duffy St"), which is
+        exactly USPS-style casing, not something that needs a suffix
+        exception list. Scoped to address fields only -- entity/company
+        names (companyName) are left alone, since title-casing "LLC" to
+        "Llc" would look worse, not more human.
+
+        Length alone can't tell a state code from a street type -- "ST"
+        (street, wants "St") and "OH" (Ohio, wants to stay "OH") are both
+        2-letter all-caps tokens. Stark's site_address embeds state and
+        zip in the same free-text field ("222 S ARCH AVE ALLIANCE OH
+        44601"), so this needs an explicit exception list rather than a
+        length rule: US state codes and postal directionals stay
+        uppercase, everything else gets title-cased.
+        """
+        keep_upper = _US_STATES | {"N", "S", "E", "W", "NE", "NW", "SE", "SW"}
+        def word(w):
+            if w.upper() in keep_upper and w.isupper():
+                return w
+            return w.title() if w.isupper() else w
+        return " ".join(word(w) for w in (s or "").split())
+
     name = p.get("owner_full") or "Unknown Owner"
     mail = p.get("mail_address") or ""
     mail_ok = looks_like_address(mail) and not is_junk_text(p.get("mail_city"))
@@ -147,14 +184,14 @@ def to_contact(ev: dict, location_id: str) -> dict:
         # hold something that isn't an address: Mahoning files tax
         # abatement notes there ("CRA 75% N / C 15 YR TY00-14", city "SEE
         # ABATED"), which reached live contacts on 2026-09-14.
-        "address1": mail if mail_ok else (p.get("site_address") or None),
-        "city": (p.get("mail_city") or None) if mail_ok else None,
+        "address1": _human_case(mail) if mail_ok else (_human_case(p.get("site_address")) or None),
+        "city": _human_case(p.get("mail_city")) or None if mail_ok else None,
         "state": (p.get("mail_state") or None) if mail_ok else None,
         "postalCode": (str(p.get("mail_zip") or "") or None) if mail_ok else None,
         "source": f"REI Leads {state} {county} feed",
         "tags": tags,
         "customFields": [
-            {"key": "property_address", "field_value": p.get("site_address", "")},
+            {"key": "property_address", "field_value": _human_case(p.get("site_address", ""))},
             {"key": "parcel_number", "field_value": p.get("parcel_display", "")},
             {"key": "county", "field_value": county},
             {"key": "delinquent_balance", "field_value": str(p.get("delq_balance") or "")},
